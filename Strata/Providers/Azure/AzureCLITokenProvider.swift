@@ -18,7 +18,7 @@ enum AzureCLIError: Error, Sendable {
 ///   binary is resolved explicitly (with a Preferences override on top).
 /// - `az` is a Python script with a ~1–2s cold start, so tokens are cached and
 ///   refreshed shortly before expiry — never on the hot path of every request.
-actor AzureCLITokenProvider {
+actor AzureCLITokenProvider: AzureTokenSource {
 
     struct Configuration: Sendable {
         /// Preferences "Path to Azure CLI" override; tried before the search paths.

@@ -42,3 +42,10 @@ struct AzureAccessToken: Sendable {
     var tenant: String?
     var subscription: String?
 }
+
+/// Anything that can supply a valid Azure data-plane token. The REST client
+/// depends on this rather than a concrete provider, so CLI piggyback, MSAL, and
+/// service-principal sources are interchangeable.
+protocol AzureTokenSource: Sendable {
+    func token(asOf now: Date) async throws -> AzureAccessToken
+}
