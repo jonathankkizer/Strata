@@ -7,7 +7,8 @@ feature, with a differentiator no competing client offers: **it tells you, befor
 you upload, whether your blob will actually trigger the Azure pipeline waiting for
 it** (Event Grid `data.api` prediction).
 
-> `Strata` is a working name — easy to change (bundle id `com.jonathankizer.Strata`).
+> `Strata` is a working name — easy to change (bundle id `com.kizersolutions.strata`,
+> matching the existing Developer ID namespace so notarization uses the same team).
 
 ## Status
 
@@ -65,6 +66,13 @@ non-sandboxed, hardened runtime off) — good enough to build and run locally.
 Shipping requires a Developer ID certificate, then re-enabling hardened runtime
 and running notarization/stapling. Those settings are called out in
 `project.pbxproj` (`ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME`).
+
+Release + notarization is automated in `.github/workflows/release.yml` (tag-triggered
+on `v*`), adapted from the Lineage project. It imports a Developer ID cert, builds
+Release with hardened runtime (`--options=runtime`), builds a DMG, notarizes via
+`notarytool --wait`, staples, and publishes a GitHub Release. Required repo secrets:
+`BUILD_CERTIFICATE_BASE64`, `P12_PASSWORD`, `KEYCHAIN_PASSWORD`, `SIGNING_IDENTITY`,
+`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`.
 
 ## The differentiator, already modeled
 
