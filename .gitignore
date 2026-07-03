@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific and build artifacts
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.perspectivev3
+!default.perspectivev3
+
+# Swift Package Manager (if added later)
+.build/
+.swiftpm/
+
+# Signing / secrets — never commit
+*.p12
+*.cer
+*.provisionprofile

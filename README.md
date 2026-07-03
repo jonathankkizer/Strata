@@ -1,0 +1,85 @@
+# Strata
+
+A Mac-assed cloud blob storage client — a native macOS client for AWS S3 and
+Azure Blob Storage (GCS and S3-compatible providers later). "Transmit for blob
+storage." Built AppKit-first, treating Mac platform craft as a first-class
+feature, with a differentiator no competing client offers: **it tells you, before
+you upload, whether your blob will actually trigger the Azure pipeline waiting for
+it** (Event Grid `data.api` prediction).
+
+> `Strata` is a working name — easy to change (bundle id `com.jonathankizer.Strata`).
+
+## Status
+
+**v1 scaffold.** The app builds, launches, and shows a live dual-pane browser
+window with a full programmatic menu bar, toolbar, window state restoration, and a
+classic (non-SwiftUI) preferences window. The provider abstraction, credential
+strategy, transfer queue, and event-prediction model are stubbed as compiling
+types; network/SDK wiring is the next step.
+
+## Design principles
+
+- **AppKit only.** No SwiftUI. Modern Swift 6 (strict concurrency, async/await)
+  wrapped around AppKit — the framework Apple's own Mac apps use.
+- **Programmatic UI.** No XIBs or Storyboards. Easier to diff, refactor, and edit.
+- **macOS 26+.** Latest APIs, no back-compat conditionals.
+- **Non-sandboxed, Developer ID–signed + notarized** distribution (Sparkle, not
+  the App Store) — required to piggyback existing `aws`/`az` credentials.
+
+See `DESIGN.md` for the full product and architecture writeup.
+
+## Project layout
+
+```
+Strata.xcodeproj          Hand-written, file-system-synchronized (Xcode 16+):
+                          drop a .swift file in Strata/ and it is picked up
+                          automatically — no project-file edit needed.
+Strata/
+  App/                    Entry point (main.swift), AppDelegate, programmatic menu bar
+  Browser/                Dual-pane browser window + content controllers
+  Model/                  Provider-agnostic core: StorageProvider, StorageContainer,
+                          StorageObject, Transfer, and BlobEvent (the event model)
+  Providers/S3/           Amazon S3 provider (AWS SDK for Swift) — stub
+  Providers/Azure/        Azure Blob provider (hand-rolled REST), auth strategy,
+                          and the event-prediction service
+  Transfer/               TransferQueue actor
+  Preferences/            Classic toolbar-paned settings window
+  Resources/              Assets.xcassets
+```
+
+## Build & run
+
+```sh
+# Build (Debug)
+xcodebuild -project Strata.xcodeproj -scheme Strata -configuration Debug build
+
+# Or open in Xcode and hit Run
+open Strata.xcodeproj
+```
+
+### Signing note
+
+This machine currently has **no code-signing identity**, so the project is
+configured to build with **ad-hoc signing** (`CODE_SIGN_IDENTITY = "-"`,
+non-sandboxed, hardened runtime off) — good enough to build and run locally.
+Shipping requires a Developer ID certificate, then re-enabling hardened runtime
+and running notarization/stapling. Those settings are called out in
+`project.pbxproj` (`ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME`).
+
+## The differentiator, already modeled
+
+`Model/BlobEvent.swift` + `Providers/Azure/EventPredictionService.swift` encode the
+operation → `data.api` table from the design doc:
+
+| Upload | REST call | emitted `data.api` |
+|---|---|---|
+| Small blob | `Put Blob` | `PutBlob` |
+| Large blob | `Put Block` ×N + `Put Block List` | `PutBlockList` |
+| Server-side copy | `Copy Blob` | `CopyBlob` |
+| ADLS Gen2 (DFS) | `CreateFile` + `Flush` | `FlushWithClose` |
+| SFTP endpoint | — | `SftpCreate` / `SftpCommit` |
+
+An `UploadPlan` reports `predictedEventSummary` (e.g. "emits BlobCreated with api:
+PutBlockList") from data-plane access alone — this is what surfaces per-transfer in
+the queue and inspector. v2 adds reading real Event Grid subscription filters when
+management RBAC is present.
