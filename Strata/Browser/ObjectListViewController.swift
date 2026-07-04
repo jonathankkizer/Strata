@@ -11,7 +11,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     /// Fired when the table's selection changes (single selection, or nil).
     var onSelectionChange: ((StorageObject?) -> Void)?
 
-    /// Fired when files are dropped from Finder onto the table; caller handles upload.
+    /// Fired when files or folders are dropped from Finder onto the table; folders are
+    /// expanded recursively by the caller.
     var onDropFiles: (([URL]) -> Void)?
 
     var location: BrowserLocation? {
@@ -441,14 +442,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         guard let rawURLs = info.draggingPasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL] else { return false }
+        ) as? [URL], !rawURLs.isEmpty else { return false }
 
-        // Exclude directories; only upload regular files.
-        let fileURLs = rawURLs.filter { url in
-            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
-        }
-        guard !fileURLs.isEmpty else { return false }
-        onDropFiles?(fileURLs)
+        onDropFiles?(rawURLs)
         return true
     }
 

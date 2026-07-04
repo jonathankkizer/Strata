@@ -1,5 +1,4 @@
 import AppKit
-import UniformTypeIdentifiers
 
 /// Hosts the container sidebar, object list, and inspector, and coordinates between
 /// them. Owns the connected provider and the Connect / Refresh / Upload / Inspector
@@ -48,7 +47,7 @@ final class BrowserSplitViewController: NSSplitViewController {
 
         objectList.onDropFiles = { [weak self] urls in
             guard let self, self.provider != nil, let location = self.objectList.location else { return }
-            self.confirmUpload(urls: urls, to: location)
+            self.startUpload(sources: urls, to: location)
         }
 
         NotificationCenter.default.addObserver(self, selector: #selector(transferQueueChanged), name: .transferQueueDidChange, object: nil)
@@ -99,15 +98,15 @@ final class BrowserSplitViewController: NSSplitViewController {
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.prompt = "Upload"
         let destination = location.prefix.isEmpty ? location.container : "\(location.container)/\(location.prefix)"
-        panel.message = "Choose files to upload to \(destination)"
+        panel.message = "Choose files or folders to upload to \(destination)"
 
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, !panel.urls.isEmpty else { return }
-            self?.confirmUpload(urls: panel.urls, to: location)
+            self?.startUpload(sources: panel.urls, to: location)
         }
     }
 
@@ -135,31 +134,28 @@ final class BrowserSplitViewController: NSSplitViewController {
 
     // MARK: - Upload
 
-    private struct PlannedUpload {
-        let url: URL
-        let key: String
-        let plan: UploadPlan
-        let contentType: String?
+    private func startUpload(sources urls: [URL], to location: BrowserLocation) {
+        Task { @MainActor in
+            let prefix = location.prefix
+            let planned = await Task.detached(priority: .userInitiated) {
+                UploadPlanning.expand(urls: urls, prefix: prefix)
+            }.value
+            guard !planned.isEmpty else { NSSound.beep(); return }
+            if StrataDefaults.askBeforeUploading {
+                self.confirmUpload(planned, to: location)
+            } else {
+                self.performUploads(planned, location: location)
+            }
+        }
     }
 
-    private func confirmUpload(urls: [URL], to location: BrowserLocation) {
+    private func confirmUpload(_ planned: [PlannedUpload], to location: BrowserLocation) {
         guard let window = view.window else { return }
-
-        let planned: [PlannedUpload] = urls.map { url in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-            let contentType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
-            return PlannedUpload(
-                url: url,
-                key: location.prefix + url.lastPathComponent,
-                plan: UploadPlan(byteCount: size, endpoint: .blob),
-                contentType: contentType
-            )
-        }
 
         // The differentiator, surfaced at the moment of action: show exactly which
         // event each upload will emit before the user commits.
         let alert = NSAlert()
-        alert.messageText = urls.count == 1 ? "Upload “\(urls[0].lastPathComponent)”?" : "Upload \(urls.count) files?"
+        alert.messageText = planned.count == 1 ? "Upload “\(lastComponent(planned[0].key))”?" : "Upload \(planned.count) files?"
         let destination = location.prefix.isEmpty ? "\(location.container) (root)" : "\(location.container)/\(location.prefix)"
         var lines = planned.prefix(8).map { "• \(lastComponent($0.key)) — \($0.plan.predictedEventSummary)" }
         if planned.count > 8 { lines.append("…and \(planned.count - 8) more") }
