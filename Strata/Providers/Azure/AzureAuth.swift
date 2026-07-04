@@ -23,6 +23,12 @@ enum AzureAuth {
     static let storageResource = "https://storage.azure.com/"
     static let storageScope = "https://storage.azure.com/.default"
 
+    /// The Azure Resource Manager (management-plane) scope — used to enumerate
+    /// subscriptions and storage accounts, which is a different audience than the
+    /// data-plane `storageResource`. Same value across public clouds; sovereign
+    /// clouds override it.
+    static let managementResource = "https://management.azure.com/"
+
     /// Candidate paths for the `az` binary. GUI apps launched from Finder do not
     /// inherit the shell PATH, so the CLI must be resolved explicitly (with a
     /// Preferences override on top of these).

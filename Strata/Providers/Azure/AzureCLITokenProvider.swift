@@ -27,14 +27,19 @@ actor AzureCLITokenProvider: AzureTokenSource {
         /// tenant-scoped; the target storage account's tenant must match.
         var subscription: String?
         var tenant: String?
+        /// The token audience. Defaults to the data-plane storage resource; the
+        /// account picker mints a management-plane token by passing
+        /// `AzureAuth.managementResource` instead.
+        var resource: String = AzureAuth.storageResource
         /// Refresh this long before expiry so callers never hand out a token that
         /// dies mid-request.
         var refreshMargin: TimeInterval = 300
 
-        init(explicitBinaryPath: String? = nil, subscription: String? = nil, tenant: String? = nil, refreshMargin: TimeInterval = 300) {
+        init(explicitBinaryPath: String? = nil, subscription: String? = nil, tenant: String? = nil, resource: String = AzureAuth.storageResource, refreshMargin: TimeInterval = 300) {
             self.explicitBinaryPath = explicitBinaryPath
             self.subscription = subscription
             self.tenant = tenant
+            self.resource = resource
             self.refreshMargin = refreshMargin
         }
     }
@@ -78,7 +83,7 @@ actor AzureCLITokenProvider: AzureTokenSource {
     private func mint() async throws -> AzureAccessToken {
         var arguments = [
             "account", "get-access-token",
-            "--resource", AzureAuth.storageResource,
+            "--resource", configuration.resource,
             "--output", "json",
         ]
         if let subscription = configuration.subscription {
