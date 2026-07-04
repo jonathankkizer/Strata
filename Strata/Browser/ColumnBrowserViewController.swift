@@ -30,6 +30,10 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         containerView.window?.makeFirstResponder(tableView)
     }
 
+    var isTableFirstResponder: Bool {
+        containerView.window?.firstResponder === tableView
+    }
+
     var selectedObject: StorageObject? {
         let row = tableView.selectedRow
         guard row >= 0, row < items.count else { return nil }
@@ -285,9 +289,10 @@ private final class ColumnNameCellView: NSTableCellView {
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -4),
 
-            chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            // Keep the chevron clear of the vertical overlay scroller at the edge.
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
-            chevron.widthAnchor.constraint(equalToConstant: 12),
+            chevron.widthAnchor.constraint(equalToConstant: 11),
         ])
     }
 
@@ -401,6 +406,27 @@ final class ColumnBrowserViewController: NSViewController {
         // After the root column loads, auto-expand into the requested prefix.
         let segments = newLocation.prefix.split(separator: "/").map(String.init)
         loadColumn(col, thenExpand: segments)
+
+        // Take keyboard focus so the arrow keys drive the columns immediately
+        // (rather than the sidebar the user just clicked).
+        col.focus()
+    }
+
+    // MARK: - Enclosing-folder navigation (⌘↑ / ←)
+
+    var canNavigateUp: Bool {
+        if let idx = focusedColumnIndex { return idx > 0 }
+        return columns.count > 1
+    }
+
+    func navigateUp() {
+        let idx = focusedColumnIndex ?? (columns.isEmpty ? nil : columns.count - 1)
+        guard let idx, idx > 0 else { return }
+        columns[idx - 1].focus()
+    }
+
+    private var focusedColumnIndex: Int? {
+        columns.firstIndex { $0.isTableFirstResponder }
     }
 
     func reload() {

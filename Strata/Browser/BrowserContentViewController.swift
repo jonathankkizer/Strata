@@ -63,10 +63,13 @@ final class BrowserContentViewController: NSViewController {
         set { apply(location: newValue, to: mode) }
     }
 
-    var canNavigateUp: Bool { mode == .list ? list.canNavigateUp : false }
+    var canNavigateUp: Bool { mode == .list ? list.canNavigateUp : columns.canNavigateUp }
 
     func navigateUp() {
-        if mode == .list { list.navigateUp() }
+        switch mode {
+        case .list: list.navigateUp()
+        case .columns: columns.navigateUp()
+        }
     }
 
     func reload() {
