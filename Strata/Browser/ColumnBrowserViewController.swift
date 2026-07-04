@@ -46,10 +46,14 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     private func buildView() {
         containerView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Vertical table scroll area.
+        // Vertical table scroll area. The single column must fill the column's
+        // width (else names truncate early with empty space to their right).
         let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("col"))
-        tableColumn.resizingMask = []
+        tableColumn.resizingMask = .autoresizingMask
+        tableColumn.width = 244
+        tableColumn.minWidth = 80
         tableView.addTableColumn(tableColumn)
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.headerView = nil
         tableView.rowHeight = 24
         // .sourceList gives the sidebar look; fall back to plain if needed.
