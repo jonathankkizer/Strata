@@ -21,6 +21,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         static let connect = NSToolbarItem.Identifier("connect")
         static let refresh = NSToolbarItem.Identifier("refresh")
         static let upload = NSToolbarItem.Identifier("upload")
+        static let viewMode = NSToolbarItem.Identifier("viewMode")
         static let inspector = NSToolbarItem.Identifier("inspector")
         static let transfers = NSToolbarItem.Identifier("transfers")
     }
@@ -103,11 +104,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     // MARK: - NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, .flexibleSpace, ToolbarID.transfers, ToolbarID.inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.viewMode, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, .flexibleSpace, ToolbarID.transfers, ToolbarID.inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, ToolbarID.transfers, ToolbarID.inspector, .flexibleSpace, .space]
+        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.viewMode, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, ToolbarID.transfers, ToolbarID.inspector, .flexibleSpace, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -146,6 +147,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
                 symbol: "sidebar.trailing",
                 action: #selector(BrowserSplitViewController.toggleObjectInspector(_:))
             )
+        case ToolbarID.viewMode:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "View"
+            item.toolTip = "Switch between List and Columns"
+            item.view = splitViewController.browseModeControl
+            return item
         case ToolbarID.transfers:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.label = "Transfers"

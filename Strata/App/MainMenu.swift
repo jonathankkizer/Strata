@@ -45,6 +45,11 @@ enum MainMenu {
         submenu("File") { menu in
             let newWindow = menu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newBrowserWindow(_:)), keyEquivalent: "n")
             newWindow.target = target
+            let newTab = menu.addItem(withTitle: "New Tab", action: #selector(AppDelegate.newBrowserTab(_:)), keyEquivalent: "t")
+            newTab.target = target
+            menu.addItem(.separator())
+            // Finder convention: ⌘O opens (descends into) the selected folder.
+            menu.addItem(withTitle: "Open", action: #selector(BrowserSplitViewController.openSelection(_:)), keyEquivalent: "o")
             menu.addItem(.separator())
             // Targets nil so it routes through the responder chain to the key
             // window's BrowserSplitViewController. Cmd+K mirrors Finder's
@@ -71,12 +76,19 @@ enum MainMenu {
 
     private static func viewMenuItem() -> NSMenuItem {
         submenu("View") { menu in
+            // Finder convention: ⌘1 / ⌘2 switch view layout.
+            menu.addItem(withTitle: "as List", action: #selector(BrowserSplitViewController.showAsList(_:)), keyEquivalent: "1")
+            menu.addItem(withTitle: "as Columns", action: #selector(BrowserSplitViewController.showAsColumns(_:)), keyEquivalent: "2")
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Refresh", action: #selector(BrowserSplitViewController.refreshListing(_:)), keyEquivalent: "r")
             let enclosing = menu.addItem(withTitle: "Enclosing Folder", action: #selector(BrowserSplitViewController.navigateToEnclosingFolder(_:)), keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1))
             enclosing.keyEquivalentModifierMask = [.command]
             // Cmd+I: the Finder "Get Info" convention for a metadata inspector.
             menu.addItem(withTitle: "Show Inspector", action: #selector(BrowserSplitViewController.toggleObjectInspector(_:)), keyEquivalent: "i")
             menu.addItem(.separator())
+            // Finder convention: ⌃⌘S toggles the sidebar.
+            let toggleSidebar = menu.addItem(withTitle: "Hide Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
+            toggleSidebar.keyEquivalentModifierMask = [.command, .control]
             let toggleToolbar = menu.addItem(withTitle: "Hide Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "t")
             toggleToolbar.keyEquivalentModifierMask = [.command, .option]
             menu.addItem(withTitle: "Customize Toolbar…", action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")

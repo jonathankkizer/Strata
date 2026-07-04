@@ -7,8 +7,19 @@ import AppKit
 final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemValidation {
 
     let sidebar = ContainerSidebarViewController()
-    let objectList = ObjectListViewController()
+    let content = BrowserContentViewController()
     let inspector = InspectorViewController()
+
+    /// List/Columns switcher; the window controller hosts it in the toolbar.
+    let browseModeControl = NSSegmentedControl(
+        images: [
+            NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List") ?? NSImage(),
+            NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: "Columns") ?? NSImage(),
+        ],
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
 
     private var provider: (any StorageProvider)?
     private var currentContainerName: String?
@@ -23,7 +34,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         sidebarItem.canCollapse = true
         addSplitViewItem(sidebarItem)
 
-        let contentItem = NSSplitViewItem(viewController: objectList)
+        let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 400
         addSplitViewItem(contentItem)
 
@@ -31,24 +42,31 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         inspectorItem.minimumThickness = 260
         inspectorItem.maximumThickness = 380
         inspectorItem.canCollapse = true
+        // Keep the window fixed and resize the center pane when the inspector
+        // toggles (Xcode-style), rather than growing/shrinking the whole window.
+        inspectorItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
         addSplitViewItem(inspectorItem)
 
         sidebar.onSelectContainer = { [weak self] container in
             guard let self, let provider = self.provider else { return }
             self.currentContainerName = container.name
-            self.objectList.provider = provider
-            self.objectList.location = BrowserLocation(container: container.name, prefix: "")
+            self.content.provider = provider
+            self.content.location = BrowserLocation(container: container.name, prefix: "")
         }
 
-        objectList.onSelectionChange = { [weak self] object in
+        content.onSelectionChange = { [weak self] object in
             guard let self else { return }
             self.inspector.present(object: object, provider: self.provider, containerName: self.currentContainerName)
         }
 
-        objectList.onDropFiles = { [weak self] urls in
-            guard let self, self.provider != nil, let location = self.objectList.location else { return }
+        content.onDropFiles = { [weak self] urls in
+            guard let self, self.provider != nil, let location = self.content.location else { return }
             self.startUpload(sources: urls, to: location)
         }
+
+        browseModeControl.selectedSegment = content.mode.rawValue
+        browseModeControl.target = self
+        browseModeControl.action = #selector(switchBrowseMode(_:))
 
         NotificationCenter.default.addObserver(self, selector: #selector(transferQueueChanged), name: .transferQueueDidChange, object: nil)
     }
@@ -76,7 +94,19 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     }
 
     @objc func refreshListing(_ sender: Any?) {
-        objectList.reload()
+        content.reload()
+    }
+
+    @objc func switchBrowseMode(_ sender: NSSegmentedControl) {
+        setBrowseMode(BrowseMode(rawValue: sender.selectedSegment) ?? .list)
+    }
+
+    @objc func showAsList(_ sender: Any?) { setBrowseMode(.list) }
+    @objc func showAsColumns(_ sender: Any?) { setBrowseMode(.columns) }
+
+    private func setBrowseMode(_ mode: BrowseMode) {
+        content.mode = mode
+        browseModeControl.selectedSegment = mode.rawValue
     }
 
     @objc func toggleObjectInspector(_ sender: Any?) {
@@ -85,7 +115,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     }
 
     @objc func uploadFiles(_ sender: Any?) {
-        guard let window = view.window, provider != nil, let location = objectList.location else {
+        guard let window = view.window, provider != nil, let location = content.location else {
             NSSound.beep()
             return
         }
@@ -108,7 +138,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.action {
         case #selector(uploadFiles(_:)):
-            return provider != nil && objectList.location != nil
+            return provider != nil && content.location != nil
         case #selector(refreshListing(_:)):
             return provider != nil
         default:
@@ -119,11 +149,25 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(navigateToEnclosingFolder(_:)):
-            return objectList.canNavigateUp
+            return content.canNavigateUp
+        case #selector(openSelection(_:)):
+            return provider != nil
+        case #selector(NSSplitViewController.toggleSidebar(_:)):
+            if let menuItem = item as? NSMenuItem {
+                let collapsed = splitViewItems.first?.isCollapsed ?? false
+                menuItem.title = collapsed ? "Show Sidebar" : "Hide Sidebar"
+            }
+            return true
         case #selector(refreshListing(_:)):
             return provider != nil
+        case #selector(showAsList(_:)):
+            (item as? NSMenuItem)?.state = content.mode == .list ? .on : .off
+            return true
+        case #selector(showAsColumns(_:)):
+            (item as? NSMenuItem)?.state = content.mode == .columns ? .on : .off
+            return true
         case #selector(uploadFiles(_:)):
-            return provider != nil && objectList.location != nil
+            return provider != nil && content.location != nil
         case #selector(toggleObjectInspector(_:)):
             if let menuItem = item as? NSMenuItem {
                 let collapsed = (splitViewItems.last?.isCollapsed ?? true)
@@ -195,12 +239,16 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     }
 
     @objc func navigateToEnclosingFolder(_ sender: Any?) {
-        objectList.navigateUp()
+        content.navigateUp()
+    }
+
+    @objc func openSelection(_ sender: Any?) {
+        content.openSelection()
     }
 
     /// Refresh the listing when a transfer finishes into the location on screen.
     @objc private func transferQueueChanged() {
-        guard let location = objectList.location else { return }
+        guard let location = content.location else { return }
         var shouldReload = false
         for transfer in TransferQueue.shared.transfers
         where transfer.state == .completed && !refreshedCompletions.contains(transfer.id) {
@@ -209,7 +257,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 shouldReload = true
             }
         }
-        if shouldReload { objectList.reload() }
+        if shouldReload { content.reload() }
     }
 
     private func lastComponent(_ key: String) -> String {
@@ -228,10 +276,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             tokenSource: AzureCLITokenProvider()
         )
         self.provider = provider
-        objectList.provider = provider
-        objectList.location = nil
+        content.provider = provider
+        content.location = nil
         sidebar.setContainers([])
-        objectList.showMessage("Loading containers from \(account)…")
+        content.showMessage("Loading containers from \(account)…")
         view.window?.title = account
         view.window?.subtitle = "Azure Blob Storage"
 
@@ -242,14 +290,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 if let first = containers.first {
                     self.sidebar.select(first)
                 } else {
-                    self.objectList.showMessage("No containers in “\(account).”")
+                    self.content.showMessage("No containers in “\(account).”")
                 }
             } catch StorageProviderError.dataPlaneForbidden(let account) {
-                self.objectList.showMessage("Authenticated, but this identity lacks a “Storage Blob Data” role on “\(account).”\n\nManagement roles (Owner/Contributor/Reader) don’t grant data-plane access.")
+                self.content.showMessage("Authenticated, but this identity lacks a “Storage Blob Data” role on “\(account).”\n\nManagement roles (Owner/Contributor/Reader) don’t grant data-plane access.")
             } catch StorageProviderError.unauthorized {
-                self.objectList.showMessage("Not authorized. Check that `az login` has a session for the account’s tenant.")
+                self.content.showMessage("Not authorized. Check that `az login` has a session for the account’s tenant.")
             } catch {
-                self.objectList.showMessage("Couldn’t connect to “\(account).”\n\n\(error.localizedDescription)")
+                self.content.showMessage("Couldn’t connect to “\(account).”\n\n\(error.localizedDescription)")
             }
         }
     }
