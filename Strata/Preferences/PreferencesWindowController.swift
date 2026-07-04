@@ -1,9 +1,9 @@
 import AppKit
 
-/// Classic Mac preferences window: an NSToolbar of icon+label items, one per
-/// pane, with the window animating its size when panes are added. Explicitly
-/// NOT the SwiftUI Settings scene. Currently hosts the General pane; add a
-/// second pane by appending to `panes` and calling `switchPane(_:)`.
+/// Classic Mac preferences window: an NSToolbar of icon+label items, one per pane,
+/// with the window sizing itself to the selected pane's content. Explicitly NOT the
+/// SwiftUI Settings scene. Currently hosts the General pane; add a second pane by
+/// appending to `panes`.
 @MainActor
 final class PreferencesWindowController: NSWindowController {
 
@@ -23,16 +23,16 @@ final class PreferencesWindowController: NSWindowController {
 
     convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 140),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 200),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        window.isRestorable = true
-        window.setFrameAutosaveName("StrataPreferencesWindow")
+        // No frame autosave: the window sizes to the selected pane's content each
+        // time, so a stale saved frame can't clamp it too small.
+        window.isRestorable = false
         self.init(window: window)
 
-        // Register panes
         let generalPane = Pane(
             identifier: "general",
             label: "General",
@@ -41,7 +41,6 @@ final class PreferencesWindowController: NSWindowController {
         )
         panes[generalPane.identifier] = generalPane
 
-        // Configure toolbar
         let toolbar = NSToolbar(identifier: "StrataPreferencesToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconAndLabel
@@ -49,20 +48,24 @@ final class PreferencesWindowController: NSWindowController {
         window.toolbarStyle = .preference
         window.toolbar = toolbar
 
-        // Select the General pane
         switchPane("general")
         toolbar.selectedItemIdentifier = NSToolbarItem.Identifier("general")
-
-        if !window.setFrameUsingName("StrataPreferencesWindow") { window.center() }
+        window.center()
     }
 
     // MARK: - Pane switching
 
     func switchPane(_ identifier: String) {
-        guard let pane = panes[identifier] else { return }
+        guard let pane = panes[identifier], let window else { return }
         currentPaneIdentifier = identifier
-        window?.contentViewController = pane.viewController
-        window?.title = pane.label
+        window.title = pane.label
+        window.contentViewController = pane.viewController
+        // Size the window to the pane's content (contentViewController assignment
+        // usually does this; set it explicitly so it's reliable).
+        let size = pane.viewController.preferredContentSize
+        if size.width > 0, size.height > 0 {
+            window.setContentSize(size)
+        }
     }
 }
 
@@ -106,38 +109,54 @@ extension PreferencesWindowController: NSToolbarDelegate {
 private final class GeneralPreferencesViewController: NSViewController {
 
     override func loadView() {
-        // Checkbox
         let checkbox = NSButton(
             checkboxWithTitle: "Ask before uploading",
             target: self,
             action: #selector(askBeforeUploadingChanged(_:))
         )
         checkbox.state = StrataDefaults.askBeforeUploading ? .on : .off
+        checkbox.translatesAutoresizingMaskIntoConstraints = false
 
-        // Description label
         let description = NSTextField(wrappingLabelWithString:
             "Shows each file's predicted Event Grid event before the upload starts. " +
             "When off, uploads begin immediately and predictions appear in the Transfers list."
         )
-        description.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        description.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         description.textColor = .secondaryLabelColor
-        // A wrapping label's intrinsic width is the full single-line text; cap it
-        // so the window (sized from the content's fitting size) stays compact.
-        description.preferredMaxLayoutWidth = 360
-        description.widthAnchor.constraint(lessThanOrEqualToConstant: 360).isActive = true
+        description.translatesAutoresizingMaskIntoConstraints = false
+        description.preferredMaxLayoutWidth = 430
+        description.widthAnchor.constraint(equalToConstant: 430).isActive = true
 
-        // Stack: checkbox on top, description indented below
-        let innerStack = NSStackView(views: [checkbox, description])
-        innerStack.orientation = .vertical
-        innerStack.alignment = .leading
-        innerStack.spacing = 6
+        let group = NSStackView(views: [checkbox, description])
+        group.orientation = .vertical
+        group.alignment = .leading
+        group.spacing = 6
+        group.translatesAutoresizingMaskIntoConstraints = false
 
-        let outerStack = NSStackView(views: [innerStack])
-        outerStack.orientation = .vertical
-        outerStack.alignment = .leading
-        outerStack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        // Grouped box, System Settings style, so the setting reads as intentional.
+        let box = NSBox()
+        box.title = "Uploads"
+        box.translatesAutoresizingMaskIntoConstraints = false
+        let boxContent = box.contentView ?? NSView()
+        boxContent.addSubview(group)
+        NSLayoutConstraint.activate([
+            group.topAnchor.constraint(equalTo: boxContent.topAnchor, constant: 6),
+            group.bottomAnchor.constraint(equalTo: boxContent.bottomAnchor, constant: -10),
+            group.leadingAnchor.constraint(equalTo: boxContent.leadingAnchor, constant: 8),
+            group.trailingAnchor.constraint(equalTo: boxContent.trailingAnchor, constant: -8),
+        ])
 
-        self.view = outerStack
+        let root = NSView()
+        root.addSubview(box)
+        NSLayoutConstraint.activate([
+            box.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            box.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            box.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            box.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
+        ])
+        view = root
+
+        preferredContentSize = NSSize(width: 520, height: 180)
     }
 
     @objc private func askBeforeUploadingChanged(_ sender: NSButton) {
