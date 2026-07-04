@@ -23,6 +23,24 @@ enum AzureBlobError: Error, Sendable {
     case malformedResponse
 }
 
+/// Per-task delegate that forwards URLSession's send-progress callbacks, offset by
+/// the bytes already committed in prior blocks of a staged upload.
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let baseOffset: Int64
+    private let totalBytes: Int64
+    private let onProgress: @Sendable (Int64, Int64) -> Void
+
+    init(baseOffset: Int64, totalBytes: Int64, onProgress: @escaping @Sendable (Int64, Int64) -> Void) {
+        self.baseOffset = baseOffset
+        self.totalBytes = totalBytes
+        self.onProgress = onProgress
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        onProgress(baseOffset + totalBytesSent, totalBytes)
+    }
+}
+
 /// A thin, hand-rolled Blob REST client over URLSession. Hand-rolling (rather than
 /// an SDK) is deliberate: the app controls exactly which REST operation each call
 /// uses, which is what makes deterministic Event Grid prediction possible. Reads
@@ -114,18 +132,20 @@ struct AzureBlobRESTClient: Sendable {
     // MARK: - Writes
 
     /// Single-shot upload. Emits `PutBlob`.
-    func putBlob(container: String, key: String, data: Data, contentType: String?) async throws {
+    func putBlob(container: String, key: String, data: Data, contentType: String?, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
         let url = blobURL(container: container, blobKey: key)
         var headers = ["x-ms-blob-type": "BlockBlob"]
         if let contentType { headers["Content-Type"] = contentType }
-        _ = try await perform(method: "PUT", url: url, body: data, extraHeaders: headers)
+        let delegate = onProgress.map { UploadProgressDelegate(baseOffset: 0, totalBytes: Int64(data.count), onProgress: $0) }
+        _ = try await perform(method: "PUT", url: url, body: data, extraHeaders: headers, delegate: delegate)
     }
 
     /// Staged upload: Put Block × N, then Put Block List. Emits `PutBlockList` on
     /// commit (even for a single block).
-    func putBlockList(container: String, key: String, data: Data, contentType: String?, blockSize: Int = 8 * 1024 * 1024) async throws {
+    func putBlockList(container: String, key: String, data: Data, contentType: String?, blockSize: Int = 8 * 1024 * 1024, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
         let url = blobURL(container: container, blobKey: key)
         let size = max(1, blockSize)
+        let total = Int64(data.count)
 
         var blockIDs: [String] = []
         var offset = 0
@@ -141,7 +161,10 @@ struct AzureBlobRESTClient: Sendable {
                 // base64 can contain + / = — encode the whole value so the query is valid.
                 URLQueryItem(name: "blockid", value: blockID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? blockID),
             ]
-            _ = try await perform(method: "PUT", url: components.url!, body: chunk, extraHeaders: [:])
+            // Progress accumulates across blocks: this block's bytes offset by the
+            // bytes already committed.
+            let delegate = onProgress.map { UploadProgressDelegate(baseOffset: Int64(offset), totalBytes: total, onProgress: $0) }
+            _ = try await perform(method: "PUT", url: components.url!, body: chunk, extraHeaders: [:], delegate: delegate)
             blockIDs.append(blockID)
             offset = end
             index += 1
@@ -168,7 +191,7 @@ struct AzureBlobRESTClient: Sendable {
     /// Signs, sends, and validates a request. Returns body + response so HEAD
     /// callers can read headers. Maps the 403 RBAC trap and 401 specifically.
     @discardableResult
-    private func perform(method: String, url: URL, body: Data?, extraHeaders: [String: String]) async throws -> (data: Data, response: HTTPURLResponse) {
+    private func perform(method: String, url: URL, body: Data?, extraHeaders: [String: String], delegate: (any URLSessionTaskDelegate)? = nil) async throws -> (data: Data, response: HTTPURLResponse) {
         let token = try await tokenSource.token(asOf: Date())
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -181,7 +204,7 @@ struct AzureBlobRESTClient: Sendable {
         let data: Data
         let response: URLResponse
         if let body {
-            (data, response) = try await session.upload(for: request, from: body)
+            (data, response) = try await session.upload(for: request, from: body, delegate: delegate)
         } else {
             (data, response) = try await session.data(for: request)
         }

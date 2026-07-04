@@ -23,7 +23,7 @@ final class S3Provider: StorageProvider {
         throw StorageProviderError.notImplemented
     }
 
-    func upload(_ data: Data, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan) async throws {
+    func upload(_ data: Data, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         throw StorageProviderError.notImplemented
     }
 }

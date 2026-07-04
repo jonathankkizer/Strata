@@ -13,6 +13,7 @@ final class BrowserSplitViewController: NSSplitViewController {
 
     private var provider: (any StorageProvider)?
     private var currentContainerName: String?
+    private var refreshedCompletions = Set<UUID>()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -43,6 +44,10 @@ final class BrowserSplitViewController: NSSplitViewController {
         objectList.onSelectionChange = { [weak self] object in
             guard let self else { return }
             self.inspector.present(object: object, provider: self.provider, containerName: self.currentContainerName)
+        }
+
+        NotificationCenter.default.addObserver(forName: .transferQueueDidChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.transferQueueChanged() }
         }
     }
 
@@ -161,39 +166,35 @@ final class BrowserSplitViewController: NSSplitViewController {
     private func performUploads(_ planned: [PlannedUpload], location: BrowserLocation) {
         guard let provider else { return }
         let container = StorageContainer(name: location.container)
+        let destination = location.prefix.isEmpty ? location.container : "\(location.container)/\(location.prefix)"
 
-        Task { @MainActor in
-            do {
-                for item in planned {
-                    let data = try Data(contentsOf: item.url)
-                    var plan = item.plan
-                    plan.byteCount = Int64(data.count)
-                    try await provider.upload(data, toKey: item.key, in: container, contentType: item.contentType, plan: plan)
-                }
-                if let last = planned.last {
-                    self.objectList.reloadSelecting(key: last.key)
-                } else {
-                    self.objectList.reload()
-                }
-            } catch {
-                self.presentUploadError(error)
-            }
+        // Hand each file to the transfer queue; progress and errors surface there
+        // rather than blocking the browser.
+        for item in planned {
+            TransferQueue.shared.enqueueUpload(
+                fileURL: item.url,
+                key: item.key,
+                container: container,
+                destination: destination,
+                contentType: item.contentType,
+                plan: item.plan,
+                provider: provider
+            )
         }
     }
 
-    private func presentUploadError(_ error: Error) {
-        guard let window = view.window else { return }
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        if case StorageProviderError.dataPlaneForbidden(let account) = error {
-            alert.messageText = "Upload not permitted"
-            alert.informativeText = "This identity can’t write to “\(account).” Writing blobs needs a Storage Blob Data Contributor (or Owner) role — read/list roles aren’t enough."
-        } else {
-            alert.messageText = "Upload failed"
-            alert.informativeText = error.localizedDescription
+    /// Refresh the listing when a transfer finishes into the location on screen.
+    private func transferQueueChanged() {
+        guard let location = objectList.location else { return }
+        var shouldReload = false
+        for transfer in TransferQueue.shared.transfers
+        where transfer.state == .completed && !refreshedCompletions.contains(transfer.id) {
+            refreshedCompletions.insert(transfer.id)
+            if transfer.container.name == location.container, transfer.key.hasPrefix(location.prefix) {
+                shouldReload = true
+            }
         }
-        alert.addButton(withTitle: "OK")
-        alert.beginSheetModal(for: window)
+        if shouldReload { objectList.reload() }
     }
 
     private func lastComponent(_ key: String) -> String {
