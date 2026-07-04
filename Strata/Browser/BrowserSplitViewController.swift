@@ -45,6 +45,8 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         // Keep the window fixed and resize the center pane when the inspector
         // toggles (Xcode-style), rather than growing/shrinking the whole window.
         inspectorItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        // Hidden by default; the last shown/hidden choice is restored across launches.
+        inspectorItem.isCollapsed = !StrataDefaults.inspectorVisible
         addSplitViewItem(inspectorItem)
 
         sidebar.onSelectContainer = { [weak self] container in
@@ -112,6 +114,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     @objc func toggleObjectInspector(_ sender: Any?) {
         guard let item = splitViewItems.last, item.behavior == .inspector else { return }
         item.animator().isCollapsed.toggle()
+        StrataDefaults.inspectorVisible = !item.isCollapsed
     }
 
     @objc func uploadFiles(_ sender: Any?) {

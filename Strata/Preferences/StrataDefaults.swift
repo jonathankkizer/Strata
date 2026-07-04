@@ -12,4 +12,14 @@ enum StrataDefaults {
         get { UserDefaults.standard.bool(forKey: askBeforeUploadingKey) }
         set { UserDefaults.standard.set(newValue, forKey: askBeforeUploadingKey) }
     }
+
+    private static let inspectorVisibleKey = "InspectorVisible"
+
+    /// Whether the object inspector pane is shown. Off by default (a new window
+    /// opens with the inspector hidden); toggling persists so the last state is
+    /// restored on the next launch. `UserDefaults.bool` defaults to false.
+    static var inspectorVisible: Bool {
+        get { UserDefaults.standard.bool(forKey: inspectorVisibleKey) }
+        set { UserDefaults.standard.set(newValue, forKey: inspectorVisibleKey) }
+    }
 }

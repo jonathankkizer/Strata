@@ -153,6 +153,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
+        // Horizontal scroll so columns clipped by a narrower pane (e.g. when the
+        // inspector opens) stay reachable rather than being lost.
+        scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
     }
 
