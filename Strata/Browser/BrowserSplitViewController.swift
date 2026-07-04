@@ -60,25 +60,19 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     // MARK: - Actions
 
     @objc func connectAzureStorageAccount(_ sender: Any?) {
-        guard let window = view.window else { return }
+        // The account picker enumerates via the management plane, which is a
+        // different token audience than the blob data plane we browse with.
+        let managementToken = AzureCLITokenProvider(
+            configuration: .init(resource: AzureAuth.managementResource)
+        )
+        let management = AzureManagementClient(tokenSource: managementToken)
 
-        let alert = NSAlert()
-        alert.messageText = "Connect to Azure Storage Account"
-        alert.informativeText = "Uses your current Azure CLI (az) login. Enter the storage account name."
-        alert.addButton(withTitle: "Connect")
-        alert.addButton(withTitle: "Cancel")
-
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.placeholderString = "storage account name"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            let account = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !account.isEmpty else { return }
-            self?.connect(account: account)
-        }
+        let picker = ConnectAccountViewController(
+            loader: { try await management.listAllStorageAccounts() },
+            onConnect: { [weak self] account in self?.connect(account: account) },
+            onCancel: {}
+        )
+        presentAsSheet(picker)
     }
 
     @objc func refreshListing(_ sender: Any?) {
