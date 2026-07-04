@@ -136,7 +136,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             return toolbarButton(
                 id: itemIdentifier,
                 label: "Upload",
-                symbol: "square.and.arrow.up",
+                symbol: "arrow.up.doc",
                 action: #selector(BrowserSplitViewController.uploadFiles(_:))
             )
         case ToolbarID.inspector:

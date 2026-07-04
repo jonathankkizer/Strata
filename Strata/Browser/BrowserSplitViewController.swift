@@ -4,7 +4,7 @@ import AppKit
 /// them. Owns the connected provider and the Connect / Refresh / Upload / Inspector
 /// actions (reached from the menu bar and toolbar via the responder chain).
 @MainActor
-final class BrowserSplitViewController: NSSplitViewController {
+final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemValidation {
 
     let sidebar = ContainerSidebarViewController()
     let objectList = ObjectListViewController()
@@ -111,6 +111,17 @@ final class BrowserSplitViewController: NSSplitViewController {
     }
 
     // Enable the actions only when they make sense.
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        switch item.action {
+        case #selector(uploadFiles(_:)):
+            return provider != nil && objectList.location != nil
+        case #selector(refreshListing(_:)):
+            return provider != nil
+        default:
+            return true
+        }
+    }
+
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(navigateToEnclosingFolder(_:)):

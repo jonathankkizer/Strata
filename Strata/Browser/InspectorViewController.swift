@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// A flipped container so scroll content stays pinned to the top.
 private final class FlippedView: NSView {
@@ -83,11 +84,15 @@ final class InspectorViewController: NSViewController {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
         guard let object else {
-            stack.addArrangedSubview(placeholder("No selection"))
+            stack.alignment = .centerX
+            stack.addArrangedSubview(emptyState())
             return
         }
 
-        stack.addArrangedSubview(headerView(for: object))
+        // .width stretches arranged subviews to the inspector width, so the header's
+        // centerX actually centers (sections keep their content leading-aligned).
+        stack.alignment = .width
+        stack.addArrangedSubview(headerView(for: object, metadata: metadata))
 
         if object.isPrefix {
             stack.addArrangedSubview(section("Kind", rows: [("Type", "Folder (prefix)")]))
@@ -118,32 +123,76 @@ final class InspectorViewController: NSViewController {
 
     // MARK: - Sections
 
-    private func headerView(for object: StorageObject) -> NSView {
+    private func headerView(for object: StorageObject, metadata: ObjectMetadata?) -> NSView {
         let icon = NSImageView()
-        let symbol = object.isPrefix ? "folder.fill" : "doc.fill"
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 30, weight: .regular)
-        icon.contentTintColor = object.isPrefix ? .controlAccentColor : .secondaryLabelColor
-        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+
+        if object.isPrefix {
+            icon.image = NSWorkspace.shared.icon(for: .folder)
+        } else {
+            // Prefer metadata contentType > listing contentType > filename extension > generic data.
+            // Quick Look preview of actual contents awaits a download path.
+            let resolvedType = contentType(for: object, metadata: metadata)
+            icon.image = NSWorkspace.shared.icon(for: resolvedType)
+        }
+        icon.image?.size = NSSize(width: 64, height: 64)
+        icon.frame = NSRect(origin: .zero, size: NSSize(width: 64, height: 64))
 
         let name = NSTextField(wrappingLabelWithString: lastComponent(of: object.key))
-        name.font = .systemFont(ofSize: 15, weight: .semibold)
+        name.font = .systemFont(ofSize: 13, weight: .semibold)
+        name.alignment = .center
         name.isSelectable = true
 
-        let subtitle = NSTextField(labelWithString: object.isPrefix ? "Folder" : (object.contentType ?? "Blob"))
+        let subtitleString: String
+        if object.isPrefix {
+            subtitleString = "Folder"
+        } else {
+            let resolvedType = contentType(for: object, metadata: metadata)
+            let kind = resolvedType.localizedDescription
+                ?? metadata?.contentType
+                ?? object.contentType
+                ?? "Blob"
+            let effectiveSize = metadata?.size ?? object.size
+            let sizeString = byteFormatter.string(fromByteCount: effectiveSize)
+            subtitleString = "\(kind) — \(sizeString)"
+        }
+
+        let subtitle = NSTextField(labelWithString: subtitleString)
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
+        subtitle.alignment = .center
 
-        let text = NSStackView(views: [name, subtitle])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 2
+        let container = NSStackView(views: [icon, name, subtitle])
+        container.orientation = .vertical
+        container.alignment = .centerX
+        container.spacing = 6
+        // Stretch to fill the inspector width so centering works.
+        container.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = NSStackView(views: [icon, text])
-        header.orientation = .horizontal
-        header.alignment = .top
-        header.spacing = 10
-        return header
+        let wrapper = NSView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(container)
+        NSLayoutConstraint.activate([
+            container.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 8),
+            container.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -8),
+            container.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
+            container.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor),
+            container.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
+        ])
+        return wrapper
+    }
+
+    /// Resolves the best available UTType for a blob, falling back gracefully.
+    private func contentType(for object: StorageObject, metadata: ObjectMetadata?) -> UTType {
+        let mimeString = metadata?.contentType ?? object.contentType
+        if let mime = mimeString, let utType = UTType(mimeType: mime) {
+            return utType
+        }
+        let ext = (object.key as NSString).pathExtension
+        if !ext.isEmpty, let utType = UTType(filenameExtension: ext) {
+            return utType
+        }
+        return .data
     }
 
     private func eventGridSection(for object: StorageObject) -> NSView {
@@ -169,7 +218,7 @@ final class InspectorViewController: NSViewController {
 
         let statusText = NSTextField(wrappingLabelWithString: fires
             ? "Fires standard BlobCreated subscriptions."
-            : "Won’t match standard BlobCreated filters.")
+            : "Won't match standard BlobCreated filters.")
         statusText.font = .systemFont(ofSize: 11)
         statusText.textColor = .secondaryLabelColor
 
@@ -191,6 +240,38 @@ final class InspectorViewController: NSViewController {
             container.addArrangedSubview(row(label, value))
         }
         return container
+    }
+
+    // MARK: - Empty state
+
+    private func emptyState() -> NSView {
+        let iconView = NSImageView()
+        iconView.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: nil)
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 48, weight: .thin)
+        iconView.contentTintColor = .tertiaryLabelColor
+
+        let label = NSTextField(labelWithString: "No Selection")
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .center
+
+        let container = NSStackView(views: [iconView, label])
+        container.orientation = .vertical
+        container.alignment = .centerX
+        container.spacing = 10
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let wrapper = NSView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(container)
+        NSLayoutConstraint.activate([
+            container.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
+            container.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 48),
+            container.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+            container.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor),
+            container.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
+        ])
+        return wrapper
     }
 
     // MARK: - Row primitives
@@ -223,13 +304,6 @@ final class InspectorViewController: NSViewController {
         row.distribution = .fill
         valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return row
-    }
-
-    private func placeholder(_ text: String) -> NSView {
-        let field = NSTextField(labelWithString: text)
-        field.textColor = .secondaryLabelColor
-        field.font = .systemFont(ofSize: 12)
-        return field
     }
 
     private func lastComponent(of key: String) -> String {

@@ -30,8 +30,14 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     private let pathControl = NSPathControl()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
-    private let messageLabel = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
+
+    // Empty-state view and its configurable subviews.
+    private let emptyStateView = NSStackView()
+    private let emptyStateImageView = NSImageView()
+    private let emptyStateTitleLabel = NSTextField(labelWithString: "")
+    private let emptyStateSubtitleLabel = NSTextField(labelWithString: "")
+    private let emptyStateButton = NSButton(title: "", target: nil, action: nil)
 
     private var items: [StorageObject] = []
     private var loadToken = 0
@@ -55,18 +61,20 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         configurePathControl()
         configureTable()
-        configureOverlays()
+        configureEmptyState()
+        configureSpinner()
 
         view.addSubview(pathControl)
         view.addSubview(scrollView)
-        view.addSubview(messageLabel)
+        view.addSubview(emptyStateView)
         view.addSubview(spinner)
 
         pathControl.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
+        // scrollView and emptyStateView occupy the same region below the path bar.
         NSLayoutConstraint.activate([
             pathControl.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
             pathControl.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
@@ -77,15 +85,21 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            messageLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            messageLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
-            messageLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            emptyStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 20),
+            emptyStateView.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
 
-            spinner.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
 
-        showMessage("Connect to a storage account to begin.")
+        showEmptyState(
+            symbol: "externaldrive.badge.questionmark",
+            title: "No Account Connected",
+            subtitle: "Connect to an Azure storage account to browse your containers and blobs.",
+            actionTitle: "Connect\u{2026}",
+            action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:))
+        )
     }
 
     // MARK: - Configuration
@@ -99,11 +113,11 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }
 
     private func configureTable() {
-        addColumn(.name, title: "Name", width: 320, minWidth: 160)
+        addColumn(.name, title: "Name", width: 320, minWidth: 160, alignment: .left)
         addColumn(.size, title: "Size", width: 90, minWidth: 60, alignment: .right)
-        addColumn(.tier, title: "Tier", width: 70, minWidth: 50)
-        addColumn(.modified, title: "Date Modified", width: 170, minWidth: 120)
-        addColumn(.kind, title: "Content Type", width: 170, minWidth: 100)
+        addColumn(.tier, title: "Tier", width: 70, minWidth: 50, alignment: .left)
+        addColumn(.modified, title: "Date Modified", width: 170, minWidth: 120, alignment: .left)
+        addColumn(.kind, title: "Content Type", width: 170, minWidth: 100, alignment: .left)
 
         tableView.dataSource = self
         tableView.delegate = self
@@ -139,7 +153,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         scrollView.autohidesScrollers = true
     }
 
-    private func addColumn(_ column: Column, title: String, width: CGFloat, minWidth: CGFloat, alignment: NSTextAlignment = .left) {
+    private func addColumn(_ column: Column, title: String, width: CGFloat, minWidth: CGFloat, alignment: NSTextAlignment) {
         let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
         tableColumn.title = title
         tableColumn.width = width
@@ -151,17 +165,80 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         tableView.addTableColumn(tableColumn)
     }
 
-    private func configureOverlays() {
-        messageLabel.alignment = .center
-        messageLabel.textColor = .secondaryLabelColor
-        messageLabel.font = .systemFont(ofSize: 13)
-        messageLabel.lineBreakMode = .byWordWrapping
-        messageLabel.maximumNumberOfLines = 0
-        messageLabel.isHidden = true
+    private func configureEmptyState() {
+        emptyStateImageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 40, weight: .thin)
+        emptyStateImageView.contentTintColor = .tertiaryLabelColor
 
+        emptyStateTitleLabel.font = .boldSystemFont(ofSize: 15)
+        emptyStateTitleLabel.textColor = .secondaryLabelColor
+        emptyStateTitleLabel.alignment = .center
+        emptyStateTitleLabel.lineBreakMode = .byWordWrapping
+        emptyStateTitleLabel.maximumNumberOfLines = 0
+
+        emptyStateSubtitleLabel.font = .systemFont(ofSize: 12)
+        emptyStateSubtitleLabel.textColor = .tertiaryLabelColor
+        emptyStateSubtitleLabel.alignment = .center
+        emptyStateSubtitleLabel.lineBreakMode = .byWordWrapping
+        emptyStateSubtitleLabel.maximumNumberOfLines = 0
+
+        emptyStateButton.bezelStyle = .rounded
+        emptyStateButton.controlSize = .regular
+
+        emptyStateView.orientation = .vertical
+        emptyStateView.alignment = .centerX
+        emptyStateView.spacing = 8
+        emptyStateView.addArrangedSubview(emptyStateImageView)
+        emptyStateView.addArrangedSubview(emptyStateTitleLabel)
+        emptyStateView.addArrangedSubview(emptyStateSubtitleLabel)
+        emptyStateView.addArrangedSubview(emptyStateButton)
+        // Spacing before button feels more Finder-like.
+        emptyStateView.setCustomSpacing(14, after: emptyStateSubtitleLabel)
+
+        emptyStateView.isHidden = true
+    }
+
+    private func configureSpinner() {
         spinner.style = .spinning
         spinner.controlSize = .regular
         spinner.isDisplayedWhenStopped = false
+    }
+
+    // MARK: - Empty state
+
+    private func showEmptyState(
+        symbol: String,
+        title: String,
+        subtitle: String?,
+        actionTitle: String?,
+        action: Selector?
+    ) {
+        emptyStateImageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        emptyStateTitleLabel.stringValue = title
+
+        if let subtitle {
+            emptyStateSubtitleLabel.stringValue = subtitle
+            emptyStateSubtitleLabel.isHidden = false
+        } else {
+            emptyStateSubtitleLabel.stringValue = ""
+            emptyStateSubtitleLabel.isHidden = true
+        }
+
+        if let actionTitle, let action {
+            emptyStateButton.title = actionTitle
+            emptyStateButton.target = nil   // routes up the responder chain
+            emptyStateButton.action = action
+            emptyStateButton.isHidden = false
+        } else {
+            emptyStateButton.isHidden = true
+        }
+
+        emptyStateView.isHidden = false
+        scrollView.isHidden = true
+    }
+
+    private func hideEmptyState() {
+        emptyStateView.isHidden = true
+        scrollView.isHidden = false
     }
 
     // MARK: - Loading
@@ -177,7 +254,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         loadToken += 1
         let token = loadToken
-        clearMessage()
+        hideEmptyState()
         items = []
         tableView.reloadData()
         spinner.startAnimation(nil)
@@ -210,9 +287,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         sortItems()
         tableView.reloadData()
         if objects.isEmpty {
-            showMessage("This location is empty.")
+            showEmptyState(symbol: "tray", title: "This Folder Is Empty", subtitle: nil, actionTitle: nil, action: nil)
         } else {
-            clearMessage()
+            hideEmptyState()
         }
 
         if let key = pendingSelectKey, let index = items.firstIndex(where: { $0.key == key }) {
@@ -230,24 +307,44 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     private func present(_ error: Error) {
         if case StorageProviderError.dataPlaneForbidden(let account) = error {
-            showMessage("Authenticated, but this identity lacks a “Storage Blob Data” role on “\(account).”\n\nGrant Storage Blob Data Reader or Contributor to browse blob data — management roles (Owner/Contributor/Reader) don’t grant data-plane access.")
+            showEmptyState(
+                symbol: "exclamationmark.triangle",
+                title: "Couldn\u{2019}t Load",
+                subtitle: "Authenticated, but this identity lacks a \u{201c}Storage Blob Data\u{201d} role on \u{201c}\(account).\u{201d}\n\nGrant Storage Blob Data Reader or Contributor to browse blob data \u{2014} management roles (Owner/Contributor/Reader) don\u{2019}t grant data-plane access.",
+                actionTitle: nil,
+                action: nil
+            )
         } else if case StorageProviderError.unauthorized = error {
-            showMessage("Not authorized. Your token may have expired — try reconnecting.")
+            showEmptyState(
+                symbol: "exclamationmark.triangle",
+                title: "Couldn\u{2019}t Load",
+                subtitle: "Not authorized. Your token may have expired \u{2014} try reconnecting.",
+                actionTitle: nil,
+                action: nil
+            )
         } else {
-            showMessage("Couldn’t load this location.\n\n\(error.localizedDescription)")
+            showEmptyState(
+                symbol: "exclamationmark.triangle",
+                title: "Couldn\u{2019}t Load",
+                subtitle: "Couldn\u{2019}t load this location.\n\n\(error.localizedDescription)",
+                actionTitle: nil,
+                action: nil
+            )
         }
     }
 
-    // MARK: - Message state
+    // MARK: - Message state (external call sites — do not remove)
 
+    /// Routes informational text from external callers (e.g. BrowserSplitViewController)
+    /// through the empty-state view with a neutral symbol.
     func showMessage(_ text: String) {
-        messageLabel.stringValue = text
-        messageLabel.isHidden = false
-    }
-
-    private func clearMessage() {
-        messageLabel.isHidden = true
-        messageLabel.stringValue = ""
+        showEmptyState(
+            symbol: "cloud",
+            title: text,
+            subtitle: nil,
+            actionTitle: nil,
+            action: nil
+        )
     }
 
     // MARK: - Path bar
@@ -349,13 +446,13 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
             cell.imageView?.contentTintColor = item.isPrefix ? .controlAccentColor : .secondaryLabelColor
             return cell
         case .size:
-            return textCell(item.isPrefix ? "—" : byteFormatter.string(fromByteCount: item.size), alignment: .right)
+            return textCell(item.isPrefix ? "\u{2014}" : byteFormatter.string(fromByteCount: item.size), alignment: .right)
         case .tier:
-            return textCell(item.isPrefix ? "" : (item.storageClass ?? "—"))
+            return textCell(item.isPrefix ? "" : (item.storageClass ?? "\u{2014}"))
         case .modified:
             return textCell(item.lastModified.map { dateFormatter.string(from: $0) } ?? "")
         case .kind:
-            return textCell(item.isPrefix ? "Folder" : (item.contentType ?? "—"))
+            return textCell(item.isPrefix ? "Folder" : (item.contentType ?? "\u{2014}"))
         }
     }
 
