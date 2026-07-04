@@ -382,10 +382,19 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }
 
     @objc private func tableDoubleClicked(_ sender: NSTableView) {
-        let row = sender.clickedRow
+        descend(row: sender.clickedRow)
+    }
+
+    /// Open (descend into) the selected folder — ⌘O / ⌘↓. Blob open/preview awaits
+    /// a download path.
+    func openSelection() {
+        descend(row: tableView.selectedRow)
+    }
+
+    private func descend(row: Int) {
         guard row >= 0, row < items.count, let location else { return }
         let item = items[row]
-        guard item.isPrefix else { return }   // descending into folders only; blob open/preview comes later
+        guard item.isPrefix else { return }
         self.location = BrowserLocation(container: location.container, prefix: item.key)
     }
 

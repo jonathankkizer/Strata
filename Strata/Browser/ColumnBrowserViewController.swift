@@ -128,6 +128,12 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.scrollRowToVisible(idx)
     }
 
+    func selectFirstRow() {
+        guard !items.isEmpty else { return }
+        tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        tableView.scrollRowToVisible(0)
+    }
+
     func reloadTable() {
         tableView.reloadData()
     }
@@ -348,6 +354,16 @@ final class ColumnBrowserViewController: NSViewController {
         messageLabel.stringValue = text
         messageLabel.isHidden = false
         outerScrollView.isHidden = true
+    }
+
+    /// Open (enter) the selected folder — ⌘O / ⌘↓ — by focusing the first row of
+    /// its already-open child column.
+    func openSelection() {
+        guard let idx = columns.lastIndex(where: { $0.selectedObject != nil }),
+              columns[idx].selectedObject?.isPrefix == true else { return }
+        let childIndex = idx + 1
+        guard childIndex < columns.count else { return }
+        columns[childIndex].selectFirstRow()
     }
 
     // MARK: - Column management

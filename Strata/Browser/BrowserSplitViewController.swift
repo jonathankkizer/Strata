@@ -150,6 +150,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         switch item.action {
         case #selector(navigateToEnclosingFolder(_:)):
             return content.canNavigateUp
+        case #selector(openSelection(_:)):
+            return provider != nil
+        case #selector(NSSplitViewController.toggleSidebar(_:)):
+            if let menuItem = item as? NSMenuItem {
+                let collapsed = splitViewItems.first?.isCollapsed ?? false
+                menuItem.title = collapsed ? "Show Sidebar" : "Hide Sidebar"
+            }
+            return true
         case #selector(refreshListing(_:)):
             return provider != nil
         case #selector(showAsList(_:)):
@@ -232,6 +240,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
     @objc func navigateToEnclosingFolder(_ sender: Any?) {
         content.navigateUp()
+    }
+
+    @objc func openSelection(_ sender: Any?) {
+        content.openSelection()
     }
 
     /// Refresh the listing when a transfer finishes into the location on screen.

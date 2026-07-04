@@ -46,6 +46,9 @@ enum MainMenu {
             let newWindow = menu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newBrowserWindow(_:)), keyEquivalent: "n")
             newWindow.target = target
             menu.addItem(.separator())
+            // Finder convention: ⌘O opens (descends into) the selected folder.
+            menu.addItem(withTitle: "Open", action: #selector(BrowserSplitViewController.openSelection(_:)), keyEquivalent: "o")
+            menu.addItem(.separator())
             // Targets nil so it routes through the responder chain to the key
             // window's BrowserSplitViewController. Cmd+K mirrors Finder's
             // "Connect to Server".
@@ -81,6 +84,9 @@ enum MainMenu {
             // Cmd+I: the Finder "Get Info" convention for a metadata inspector.
             menu.addItem(withTitle: "Show Inspector", action: #selector(BrowserSplitViewController.toggleObjectInspector(_:)), keyEquivalent: "i")
             menu.addItem(.separator())
+            // Finder convention: ⌃⌘S toggles the sidebar.
+            let toggleSidebar = menu.addItem(withTitle: "Hide Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
+            toggleSidebar.keyEquivalentModifierMask = [.command, .control]
             let toggleToolbar = menu.addItem(withTitle: "Hide Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "t")
             toggleToolbar.keyEquivalentModifierMask = [.command, .option]
             menu.addItem(withTitle: "Customize Toolbar…", action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")

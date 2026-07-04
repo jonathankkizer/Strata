@@ -66,6 +66,13 @@ final class BrowserContentViewController: NSViewController {
         }
     }
 
+    func openSelection() {
+        switch mode {
+        case .list: list.openSelection()
+        case .columns: columns.openSelection()
+        }
+    }
+
     func showMessage(_ text: String) {
         list.showMessage(text)
         columns.showMessage(text)
