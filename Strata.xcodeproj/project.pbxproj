@@ -6,16 +6,43 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		5741A0000000000000000017 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5741A0000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5741A0000000000000000005;
+			remoteInfo = Strata;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		5741A0000000000000000006 /* Strata.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Strata.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5741A0000000000000000012 /* StrataTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StrataTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		5741A0000000000000000004 /* Strata */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Strata;
 			sourceTree = "<group>";
 		};
+		5741A0000000000000000010 /* StrataTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = StrataTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		5741A0000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5741A0000000000000000014 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -37,6 +64,7 @@
 			isa = PBXGroup;
 			children = (
 				5741A0000000000000000006 /* Strata.app */,
+				5741A0000000000000000012 /* StrataTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -66,7 +94,38 @@
 			productReference = 5741A0000000000000000006 /* Strata.app */;
 			productType = "com.apple.product-type.application";
 		};
+		5741A0000000000000000011 /* StrataTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5741A000000000000000001A /* Build configuration list for PBXNativeTarget "StrataTests" */;
+			buildPhases = (
+				5741A0000000000000000013 /* Sources */,
+				5741A0000000000000000014 /* Frameworks */,
+				5741A0000000000000000015 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5741A0000000000000000016 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5741A0000000000000000010 /* StrataTests */,
+			);
+			name = StrataTests;
+			packageProductDependencies = (
+			);
+			productName = StrataTests;
+			productReference = 5741A0000000000000000012 /* StrataTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		5741A0000000000000000016 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5741A0000000000000000005 /* Strata */;
+			targetProxy = 5741A0000000000000000017 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		5741A0000000000000000001 /* Project object */ = {
@@ -78,6 +137,10 @@
 				TargetAttributes = {
 					5741A0000000000000000005 = {
 						CreatedOnToolsVersion = 26.6;
+					};
+					5741A0000000000000000011 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 5741A0000000000000000005;
 					};
 				};
 			};
@@ -96,6 +159,7 @@
 			projectRoot = "";
 			targets = (
 				5741A0000000000000000005 /* Strata */,
+				5741A0000000000000000011 /* StrataTests */,
 			);
 		};
 /* End PBXProject section */
@@ -108,10 +172,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5741A0000000000000000015 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5741A0000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5741A0000000000000000013 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -303,6 +381,44 @@
 			};
 			name = Release;
 		};
+		5741A0000000000000000018 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kizersolutions.strataTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Strata.app/Contents/MacOS/Strata";
+			};
+			name = Debug;
+		};
+		5741A0000000000000000019 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.kizersolutions.strataTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Strata.app/Contents/MacOS/Strata";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -320,6 +436,15 @@
 			buildConfigurations = (
 				5741A000000000000000000E /* Debug */,
 				5741A000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5741A000000000000000001A /* Build configuration list for PBXNativeTarget "StrataTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5741A0000000000000000018 /* Debug */,
+				5741A0000000000000000019 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -296,9 +296,10 @@ extension ObjectMetadata {
 //
 // The List APIs return XML. Foundation's XMLParser (no dependency) is used
 // synchronously inside each call — the delegates never cross an actor boundary, so
-// they need not be Sendable.
+// they need not be Sendable. Internal (not private) so they can be unit-tested via
+// `@testable import`.
 
-private final class ContainerListXMLParser: NSObject, XMLParserDelegate {
+final class ContainerListXMLParser: NSObject, XMLParserDelegate {
     private var containers: [StorageContainer] = []
     private var nextMarker: String?
     private var text = ""
@@ -342,7 +343,7 @@ private final class ContainerListXMLParser: NSObject, XMLParserDelegate {
     }
 }
 
-private final class BlobListXMLParser: NSObject, XMLParserDelegate {
+final class BlobListXMLParser: NSObject, XMLParserDelegate {
     private var objects: [StorageObject] = []
     private var nextMarker: String?
     private var text = ""
