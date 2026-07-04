@@ -80,6 +80,8 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         copyPath.target = self
         menu.addItem(copyName)
         menu.addItem(copyPath)
+        menu.addItem(.separator())
+        menu.addItem(SortMenu.makeItem(shortcuts: false))
         tableView.menu = menu
 
         scrollView.documentView = tableView
@@ -330,6 +332,9 @@ final class ColumnBrowserViewController: NSViewController {
     // Live columns in left-to-right order.
     private var columns: [BrowseColumn] = []
 
+    /// Current sort, shared with the list via the facade.
+    private var sort = BrowseSort()
+
     // While auto-expanding to a deep prefix, `expand(column:segments:)` drives
     // column creation itself, so the selection callback must not also open columns.
     private var isAutoExpanding = false
@@ -578,7 +583,7 @@ final class ColumnBrowserViewController: NSViewController {
 
             switch result {
             case .success(let objects):
-                col.items = Self.sorted(objects)
+                col.items = objects.sorted(by: self.sort.areInOrder)
                 col.reloadTable()
                 col.hideOverlays()
                 if objects.isEmpty { col.showEmptyLabel("Empty") }
@@ -619,7 +624,7 @@ final class ColumnBrowserViewController: NSViewController {
 
             switch result {
             case .success(let objects):
-                col.items = Self.sorted(objects)
+                col.items = objects.sorted(by: self.sort.areInOrder)
                 col.reloadTable()
                 col.hideOverlays()
                 if objects.isEmpty { col.showEmptyLabel("Empty") }
@@ -655,12 +660,16 @@ final class ColumnBrowserViewController: NSViewController {
         loadColumn(nextCol, thenExpand: rest)
     }
 
-    // MARK: - Sorting (folders before blobs; localizedStandard within each group)
+    // MARK: - Sorting (folders always before blobs)
 
-    private static func sorted(_ objects: [StorageObject]) -> [StorageObject] {
-        objects.sorted { lhs, rhs in
-            if lhs.isPrefix != rhs.isPrefix { return lhs.isPrefix }
-            return lhs.key.localizedStandardCompare(rhs.key) == .orderedAscending
+    /// Re-sorts every open column and reloads, preserving each column's selection.
+    func applySort(_ newSort: BrowseSort) {
+        sort = newSort
+        for col in columns {
+            let selectedKey = col.selectedObject?.key
+            col.items = col.items.sorted(by: sort.areInOrder)
+            col.reloadTable()
+            if let selectedKey { col.selectRow(for: selectedKey) }
         }
     }
 

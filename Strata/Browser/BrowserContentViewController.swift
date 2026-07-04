@@ -86,6 +86,29 @@ final class BrowserContentViewController: NSViewController {
         }
     }
 
+    // MARK: - Sorting (shared across both views)
+
+    private(set) var sort = BrowseSort()
+
+    /// From a menu / context "Sort By" command: pick the field (toggling direction if
+    /// it's already the sort field), and apply to both views.
+    func setSort(_ key: SortKey) {
+        if sort.key == key {
+            sort.ascending.toggle()
+        } else {
+            sort = BrowseSort(key: key, ascending: true)
+        }
+        list.applySort(sort)
+        columns.applySort(sort)
+    }
+
+    /// From a list column-header click: adopt that sort and keep the columns view in
+    /// step (the list already re-sorted itself).
+    private func handleListSortChange(_ newSort: BrowseSort) {
+        sort = newSort
+        columns.applySort(sort)
+    }
+
     func showMessage(_ text: String) {
         list.showMessage(text)
         columns.showMessage(text)
@@ -139,6 +162,9 @@ final class BrowserContentViewController: NSViewController {
         // Both surfaces report location changes to the one shared path bar.
         list.onLocationChange = { [weak self] location in self?.updatePathBar(for: location) }
         columns.onLocationChange = { [weak self] location in self?.updatePathBar(for: location) }
+
+        // A list header click updates the shared sort so the columns view + menus follow.
+        list.onSortChange = { [weak self] newSort in self?.handleListSortChange(newSort) }
     }
 
     private func configurePathBar() {

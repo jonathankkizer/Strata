@@ -155,6 +155,11 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             return content.canNavigateUp
         case #selector(openSelection(_:)):
             return provider != nil
+        case #selector(sortBy(_:)):
+            if let menuItem = item as? NSMenuItem, let key = menuItem.representedObject as? SortKey {
+                menuItem.state = content.sort.key == key ? .on : .off
+            }
+            return provider != nil
         case #selector(NSSplitViewController.toggleSidebar(_:)):
             if let menuItem = item as? NSMenuItem {
                 let collapsed = splitViewItems.first?.isCollapsed ?? false
@@ -247,6 +252,11 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
     @objc func openSelection(_ sender: Any?) {
         content.openSelection()
+    }
+
+    @objc func sortBy(_ sender: Any?) {
+        guard let key = (sender as? NSMenuItem)?.representedObject as? SortKey else { return }
+        content.setSort(key)
     }
 
     /// Refresh the listing when a transfer finishes into the location on screen.
