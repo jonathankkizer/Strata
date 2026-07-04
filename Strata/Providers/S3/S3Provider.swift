@@ -18,4 +18,12 @@ final class S3Provider: StorageProvider {
     func listObjects(in container: StorageContainer, prefix: String) async throws -> [StorageObject] {
         throw StorageProviderError.notImplemented
     }
+
+    func fetchMetadata(for object: StorageObject, in container: StorageContainer) async throws -> ObjectMetadata {
+        throw StorageProviderError.notImplemented
+    }
+
+    func upload(_ data: Data, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan) async throws {
+        throw StorageProviderError.notImplemented
+    }
 }

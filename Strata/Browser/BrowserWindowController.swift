@@ -11,6 +11,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     private enum ToolbarID {
         static let connect = NSToolbarItem.Identifier("connect")
         static let refresh = NSToolbarItem.Identifier("refresh")
+        static let upload = NSToolbarItem.Identifier("upload")
+        static let inspector = NSToolbarItem.Identifier("inspector")
     }
 
     convenience init() {
@@ -48,11 +50,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     // MARK: - NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.connect, ToolbarID.refresh, .flexibleSpace]
+        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, .flexibleSpace, ToolbarID.inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.connect, ToolbarID.refresh, .flexibleSpace, .space]
+        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, ToolbarID.inspector, .flexibleSpace, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -76,6 +78,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
                 label: "Refresh",
                 symbol: "arrow.clockwise",
                 action: #selector(BrowserSplitViewController.refreshListing(_:))
+            )
+        case ToolbarID.upload:
+            return toolbarButton(
+                id: itemIdentifier,
+                label: "Upload",
+                symbol: "square.and.arrow.up",
+                action: #selector(BrowserSplitViewController.uploadFiles(_:))
+            )
+        case ToolbarID.inspector:
+            return toolbarButton(
+                id: itemIdentifier,
+                label: "Inspector",
+                symbol: "sidebar.trailing",
+                action: #selector(BrowserSplitViewController.toggleObjectInspector(_:))
             )
         default:
             return nil

@@ -63,7 +63,7 @@ struct AzureBlobRESTClient: Sendable {
             components.queryItems = [URLQueryItem(name: "comp", value: "list")]
             if let marker { components.queryItems?.append(URLQueryItem(name: "marker", value: marker)) }
 
-            let data = try await send(components.url!)
+            let data = try await get(components.url!)
             let parsed = try ContainerListXMLParser().parse(data)
             results.append(contentsOf: parsed.containers)
             marker = parsed.nextMarker
@@ -93,7 +93,7 @@ struct AzureBlobRESTClient: Sendable {
             if let marker { query.append(URLQueryItem(name: "marker", value: marker)) }
             components.queryItems = query
 
-            let data = try await send(components.url!)
+            let data = try await get(components.url!)
             let parsed = try BlobListXMLParser().parse(data)
             results.append(contentsOf: parsed.objects)
             marker = parsed.nextMarker
@@ -102,32 +102,114 @@ struct AzureBlobRESTClient: Sendable {
         return results
     }
 
+    // MARK: - Get Blob Properties (HEAD)
+
+    /// Full metadata for a single blob. Header names are read case-insensitively.
+    func fetchProperties(container: String, blobKey: String) async throws -> ObjectMetadata {
+        let url = blobURL(container: container, blobKey: blobKey)
+        let (_, response) = try await perform(method: "HEAD", url: url, body: nil, extraHeaders: [:])
+        return ObjectMetadata(from: response)
+    }
+
+    // MARK: - Writes
+
+    /// Single-shot upload. Emits `PutBlob`.
+    func putBlob(container: String, key: String, data: Data, contentType: String?) async throws {
+        let url = blobURL(container: container, blobKey: key)
+        var headers = ["x-ms-blob-type": "BlockBlob"]
+        if let contentType { headers["Content-Type"] = contentType }
+        _ = try await perform(method: "PUT", url: url, body: data, extraHeaders: headers)
+    }
+
+    /// Staged upload: Put Block × N, then Put Block List. Emits `PutBlockList` on
+    /// commit (even for a single block).
+    func putBlockList(container: String, key: String, data: Data, contentType: String?, blockSize: Int = 8 * 1024 * 1024) async throws {
+        let url = blobURL(container: container, blobKey: key)
+        let size = max(1, blockSize)
+
+        var blockIDs: [String] = []
+        var offset = 0
+        var index = 0
+        while offset < data.count {
+            let end = min(offset + size, data.count)
+            let chunk = data.subdata(in: offset..<end)
+            let blockID = Data(String(format: "block-%08d", index).utf8).base64EncodedString()
+
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            components.percentEncodedQueryItems = [
+                URLQueryItem(name: "comp", value: "block"),
+                // base64 can contain + / = — encode the whole value so the query is valid.
+                URLQueryItem(name: "blockid", value: blockID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? blockID),
+            ]
+            _ = try await perform(method: "PUT", url: components.url!, body: chunk, extraHeaders: [:])
+            blockIDs.append(blockID)
+            offset = end
+            index += 1
+        }
+        // An empty file still needs one commit with zero blocks.
+
+        var xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<BlockList>\n"
+        for id in blockIDs { xml += "  <Latest>\(id)</Latest>\n" }
+        xml += "</BlockList>"
+
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "comp", value: "blocklist")]
+        var headers = ["Content-Type": "application/xml"]
+        if let contentType { headers["x-ms-blob-content-type"] = contentType }
+        _ = try await perform(method: "PUT", url: components.url!, body: Data(xml.utf8), extraHeaders: headers)
+    }
+
     // MARK: - Transport
 
-    private func send(_ url: URL) async throws -> Data {
+    private func get(_ url: URL) async throws -> Data {
+        try await perform(method: "GET", url: url, body: nil, extraHeaders: [:]).data
+    }
+
+    /// Signs, sends, and validates a request. Returns body + response so HEAD
+    /// callers can read headers. Maps the 403 RBAC trap and 401 specifically.
+    @discardableResult
+    private func perform(method: String, url: URL, body: Data?, extraHeaders: [String: String]) async throws -> (data: Data, response: HTTPURLResponse) {
         let token = try await tokenSource.token(asOf: Date())
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        request.httpMethod = method
         request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(apiVersion, forHTTPHeaderField: "x-ms-version")
+        for (name, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
 
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        if let body {
+            (data, response) = try await session.upload(for: request, from: body)
+        } else {
+            (data, response) = try await session.data(for: request)
+        }
+
         guard let http = response as? HTTPURLResponse else {
             throw AzureBlobError.notHTTPResponse
         }
         switch http.statusCode {
         case 200..<300:
-            return data
+            return (data, http)
         case 401:
             throw StorageProviderError.unauthorized
         case 403:
-            // The RBAC trap: a valid token whose identity lacks a Storage Blob Data
-            // role. Surfaced specifically rather than as a generic auth failure.
             throw StorageProviderError.dataPlaneForbidden(account: endpoint.account)
         default:
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw AzureBlobError.httpError(status: http.statusCode, code: Self.errorCode(in: body), message: body)
+            let bodyString = String(data: data, encoding: .utf8) ?? ""
+            throw AzureBlobError.httpError(status: http.statusCode, code: Self.errorCode(in: bodyString), message: bodyString)
         }
+    }
+
+    /// Builds a blob URL, appending each path segment so embedded slashes are
+    /// preserved as real path separators.
+    private func blobURL(container: String, blobKey: String) -> URL {
+        var url = endpoint.baseURL.appendingPathComponent(container)
+        for segment in blobKey.split(separator: "/", omittingEmptySubsequences: true) {
+            url.appendPathComponent(String(segment))
+        }
+        return url
     }
 
     /// Pulls Azure's `<Code>…</Code>` out of an error response body for diagnostics.
@@ -135,6 +217,43 @@ struct AzureBlobRESTClient: Sendable {
         guard let open = body.range(of: "<Code>"), let close = body.range(of: "</Code>"),
               open.upperBound <= close.lowerBound else { return nil }
         return String(body[open.upperBound..<close.lowerBound])
+    }
+}
+
+// MARK: - Header decoding
+
+extension ObjectMetadata {
+    /// Decodes an Azure Get Blob Properties (HEAD) response.
+    init(from response: HTTPURLResponse) {
+        func header(_ name: String) -> String? {
+            (response.value(forHTTPHeaderField: name)).flatMap { $0.isEmpty ? nil : $0 }
+        }
+
+        var custom: [String: String] = [:]
+        for (rawKey, rawValue) in response.allHeaderFields {
+            guard let key = (rawKey as? String)?.lowercased(), key.hasPrefix("x-ms-meta-"),
+                  let value = rawValue as? String else { continue }
+            custom[String(key.dropFirst("x-ms-meta-".count))] = value
+        }
+
+        var lastModified: Date?
+        if let raw = header("Last-Modified") {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "GMT")
+            formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+            lastModified = formatter.date(from: raw)
+        }
+
+        self.init(
+            size: header("Content-Length").flatMap { Int64($0) } ?? 0,
+            contentType: header("Content-Type"),
+            storageClass: header("x-ms-access-tier"),
+            etag: header("Etag"),
+            lastModified: lastModified,
+            blobType: header("x-ms-blob-type"),
+            custom: custom
+        )
     }
 }
 

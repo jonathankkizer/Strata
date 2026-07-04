@@ -50,6 +50,7 @@ enum MainMenu {
             // window's BrowserSplitViewController. Cmd+K mirrors Finder's
             // "Connect to Server".
             menu.addItem(withTitle: "Connect to Azure Storage Account…", action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:)), keyEquivalent: "k")
+            menu.addItem(withTitle: "Upload…", action: #selector(BrowserSplitViewController.uploadFiles(_:)), keyEquivalent: "u")
             menu.addItem(.separator())
             menu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         }
@@ -71,6 +72,8 @@ enum MainMenu {
     private static func viewMenuItem() -> NSMenuItem {
         submenu("View") { menu in
             menu.addItem(withTitle: "Refresh", action: #selector(BrowserSplitViewController.refreshListing(_:)), keyEquivalent: "r")
+            // Cmd+I: the Finder "Get Info" convention for a metadata inspector.
+            menu.addItem(withTitle: "Show Inspector", action: #selector(BrowserSplitViewController.toggleObjectInspector(_:)), keyEquivalent: "i")
             menu.addItem(.separator())
             let toggleToolbar = menu.addItem(withTitle: "Hide Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "t")
             toggleToolbar.keyEquivalentModifierMask = [.command, .option]

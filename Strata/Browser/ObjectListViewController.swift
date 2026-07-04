@@ -8,6 +8,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     var provider: (any StorageProvider)?
 
+    /// Fired when the table's selection changes (single selection, or nil).
+    var onSelectionChange: ((StorageObject?) -> Void)?
+
     var location: BrowserLocation? {
         didSet {
             guard location != oldValue else { return }
@@ -28,6 +31,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     private var items: [StorageObject] = []
     private var loadToken = 0
+    private var pendingSelectKey: String?
 
     private let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -139,6 +143,12 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     // MARK: - Loading
 
+    /// Reloads and, once loaded, selects the row with `key` (used after an upload).
+    func reloadSelecting(key: String) {
+        pendingSelectKey = key
+        reload()
+    }
+
     func reload() {
         guard let provider, let location else { return }
 
@@ -181,6 +191,18 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         } else {
             clearMessage()
         }
+
+        if let key = pendingSelectKey, let index = items.firstIndex(where: { $0.key == key }) {
+            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            tableView.scrollRowToVisible(index)
+        }
+        pendingSelectKey = nil
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let row = tableView.selectedRow
+        let object = (row >= 0 && row < items.count) ? items[row] : nil
+        onSelectionChange?(object)
     }
 
     private func present(_ error: Error) {

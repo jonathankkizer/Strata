@@ -15,6 +15,14 @@ protocol StorageProvider: Sendable {
 
     func listContainers() async throws -> [StorageContainer]
     func listObjects(in container: StorageContainer, prefix: String) async throws -> [StorageObject]
+
+    /// Full metadata for a single object (a HEAD / Get Blob Properties).
+    func fetchMetadata(for object: StorageObject, in container: StorageContainer) async throws -> ObjectMetadata
+
+    /// Writes `data` to `key`. The `plan` declares which REST operation is used —
+    /// and therefore which storage event fires — so callers can predict and surface
+    /// it before the upload happens.
+    func upload(_ data: Data, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan) async throws
 }
 
 enum StorageProviderError: Error, Sendable {
