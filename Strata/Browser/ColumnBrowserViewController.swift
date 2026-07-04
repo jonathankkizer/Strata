@@ -10,7 +10,7 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     let location: BrowserLocation
     let containerView: NSView
 
-    private let tableView = NSTableView()
+    private let tableView = KeyNavTableView()
     private let scrollView = NSScrollView()
     private let spinner = NSProgressIndicator()
     private let emptyLabel = NSTextField(labelWithString: "")
@@ -20,6 +20,15 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
 
     /// Called when the selection changes (folder or blob, or nil on deselect).
     var onSelectionChange: ((StorageObject?) -> Void)?
+    /// ⌘↓ / → — enter the selected folder's child column.
+    var onEnter: (() -> Void)?
+    /// ← — move focus to the parent column.
+    var onExit: (() -> Void)?
+
+    /// Make this column's table the first responder (used by ←/→ navigation).
+    func focus() {
+        containerView.window?.makeFirstResponder(tableView)
+    }
 
     var selectedObject: StorageObject? {
         let row = tableView.selectedRow
@@ -49,6 +58,9 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.dataSource = self
         tableView.delegate = self
         tableView.focusRingType = .none
+        tableView.onCommandDown = { [weak self] in self?.onEnter?() }
+        tableView.onArrowRight = { [weak self] in self?.onEnter?() }
+        tableView.onArrowLeft = { [weak self] in self?.onExit?() }
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -356,14 +368,10 @@ final class ColumnBrowserViewController: NSViewController {
         outerScrollView.isHidden = true
     }
 
-    /// Open (enter) the selected folder — ⌘O / ⌘↓ — by focusing the first row of
-    /// its already-open child column.
+    /// Open (enter) the deepest selected folder — the ⌘O menu path.
     func openSelection() {
-        guard let idx = columns.lastIndex(where: { $0.selectedObject != nil }),
-              columns[idx].selectedObject?.isPrefix == true else { return }
-        let childIndex = idx + 1
-        guard childIndex < columns.count else { return }
-        columns[childIndex].selectFirstRow()
+        guard let idx = columns.lastIndex(where: { $0.selectedObject != nil }) else { return }
+        enterChild(of: columns[idx])
     }
 
     // MARK: - Column management
@@ -381,7 +389,31 @@ final class ColumnBrowserViewController: NSViewController {
             guard let self, let col else { return }
             self.handleSelection(object, inColumn: col)
         }
+        col.onEnter = { [weak self, weak col] in
+            guard let self, let col else { return }
+            self.enterChild(of: col)
+        }
+        col.onExit = { [weak self, weak col] in
+            guard let self, let col else { return }
+            self.focusParent(of: col)
+        }
         return col
+    }
+
+    /// Move into the selected folder's (already-open) child column and focus it.
+    private func enterChild(of col: BrowseColumn) {
+        guard let idx = columns.firstIndex(where: { $0 === col }),
+              col.selectedObject?.isPrefix == true else { return }
+        let childIndex = idx + 1
+        guard childIndex < columns.count else { return }
+        columns[childIndex].selectFirstRow()
+        columns[childIndex].focus()
+    }
+
+    /// Move focus to the parent column (←).
+    private func focusParent(of col: BrowseColumn) {
+        guard let idx = columns.firstIndex(where: { $0 === col }), idx > 0 else { return }
+        columns[idx - 1].focus()
     }
 
     private func clearColumns() {

@@ -54,15 +54,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openBrowserWindow(sender: sender)
     }
 
+    @objc func newBrowserTab(_ sender: Any?) {
+        openBrowserWindow(sender: sender, asTab: true)
+    }
+
     // MARK: - Private
 
-    private func openBrowserWindow(sender: Any?) {
+    private func openBrowserWindow(sender: Any?, asTab: Bool = false) {
         let controller = BrowserWindowController()
         browserWindowControllers.append(controller)
         controller.onWindowClose = { [weak self, weak controller] in
             guard let self, let controller else { return }
             self.browserWindowControllers.removeAll { $0 === controller }
         }
-        controller.showWindow(sender)
+        if asTab, let keyWindow = NSApp.keyWindow, let newWindow = controller.window {
+            keyWindow.addTabbedWindow(newWindow, ordered: .above)
+            newWindow.makeKeyAndOrderFront(sender)
+        } else {
+            controller.showWindow(sender)
+        }
     }
 }

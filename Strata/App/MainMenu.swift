@@ -45,6 +45,8 @@ enum MainMenu {
         submenu("File") { menu in
             let newWindow = menu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newBrowserWindow(_:)), keyEquivalent: "n")
             newWindow.target = target
+            let newTab = menu.addItem(withTitle: "New Tab", action: #selector(AppDelegate.newBrowserTab(_:)), keyEquivalent: "t")
+            newTab.target = target
             menu.addItem(.separator())
             // Finder convention: ⌘O opens (descends into) the selected folder.
             menu.addItem(withTitle: "Open", action: #selector(BrowserSplitViewController.openSelection(_:)), keyEquivalent: "o")
