@@ -15,10 +15,13 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     /// expanded recursively by the caller.
     var onDropFiles: (([URL]) -> Void)?
 
+    /// Fired when the browse location changes, so the shared path bar can update.
+    var onLocationChange: ((BrowserLocation?) -> Void)?
+
     var location: BrowserLocation? {
         didSet {
             guard location != oldValue else { return }
-            updatePathBar()
+            onLocationChange?(location)
             reload()
         }
     }
@@ -27,7 +30,6 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         case name, size, tier, modified, kind
     }
 
-    private let pathControl = NSPathControl()
     private let tableView = KeyNavTableView()
     private let scrollView = NSScrollView()
     private let spinner = NSProgressIndicator()
@@ -59,30 +61,22 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
 
-        configurePathControl()
         configureTable()
         configureEmptyState()
         configureSpinner()
 
-        view.addSubview(pathControl)
         view.addSubview(scrollView)
         view.addSubview(emptyStateView)
         view.addSubview(spinner)
 
-        pathControl.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         emptyStateView.translatesAutoresizingMaskIntoConstraints = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
-        // scrollView and emptyStateView occupy the same region below the path bar.
+        // scrollView and emptyStateView occupy the same region. Pin below the toolbar
+        // (safe area) so content doesn't sit behind the translucent titlebar.
         NSLayoutConstraint.activate([
-            // Pin below the toolbar (safe area), not the window top, so the path bar
-            // doesn't sit behind the translucent titlebar and ghost through it.
-            pathControl.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
-            pathControl.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            pathControl.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-
-            scrollView.topAnchor.constraint(equalTo: pathControl.bottomAnchor, constant: 6),
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -105,14 +99,6 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }
 
     // MARK: - Configuration
-
-    private func configurePathControl() {
-        pathControl.pathStyle = .standard
-        pathControl.target = self
-        pathControl.action = #selector(pathControlClicked(_:))
-        pathControl.isEnabled = true
-        pathControl.focusRingType = .none
-    }
 
     private func configureTable() {
         addColumn(.name, title: "Name", width: 320, minWidth: 160, alignment: .left)
@@ -353,38 +339,6 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         )
     }
 
-    // MARK: - Path bar
-
-    private func updatePathBar() {
-        guard let location else {
-            pathControl.pathItems = []
-            return
-        }
-        var pathItems: [NSPathControlItem] = []
-
-        let root = NSPathControlItem()
-        root.title = location.container
-        root.image = NSImage(systemSymbolName: "shippingbox", accessibilityDescription: "Container")
-        pathItems.append(root)
-
-        for segment in location.segments {
-            let item = NSPathControlItem()
-            item.title = segment
-            item.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder")
-            pathItems.append(item)
-        }
-        pathControl.pathItems = pathItems
-    }
-
-    @objc private func pathControlClicked(_ sender: NSPathControl) {
-        guard let location, let clicked = sender.clickedPathItem,
-              let index = sender.pathItems.firstIndex(of: clicked) else { return }
-        // index 0 is the container root (empty prefix); index i keeps the first i segments.
-        let newPrefix = index == 0 ? "" : location.segments[0..<index].map { $0 + "/" }.joined()
-        guard newPrefix != location.prefix else { return }
-        self.location = BrowserLocation(container: location.container, prefix: newPrefix)
-    }
-
     @objc private func tableDoubleClicked(_ sender: NSTableView) {
         descend(row: sender.clickedRow)
     }
@@ -573,10 +527,16 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }
 
     @objc private func copyPath(_ sender: Any?) {
-        let keys = selectedObjects().map { $0.key }.joined(separator: "\n")
-        guard !keys.isEmpty else { return }
+        // Full path (container/key), matching the path bar and columns view.
+        let container = location?.container ?? ""
+        let paths = selectedObjects().map { object -> String in
+            var key = object.key
+            if key.hasSuffix("/") { key.removeLast() }
+            return container.isEmpty ? key : "\(container)/\(key)"
+        }.joined(separator: "\n")
+        guard !paths.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(keys, forType: .string)
+        NSPasteboard.general.setString(paths, forType: .string)
     }
 
     /// Returns the objects for the current selection, preferring clicked row when

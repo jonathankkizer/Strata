@@ -56,8 +56,11 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.headerView = nil
         tableView.rowHeight = 24
-        // .sourceList gives the sidebar look; fall back to plain if needed.
-        tableView.style = .sourceList
+        // Plain (not .sourceList): the source-list material only paints where rows
+        // exist, leaving empty columns a different colour. Plain + an explicit
+        // background keeps every column uniform.
+        tableView.style = .plain
+        tableView.backgroundColor = .controlBackgroundColor
         tableView.allowsMultipleSelection = false
         tableView.dataSource = self
         tableView.delegate = self
@@ -66,10 +69,21 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.onArrowRight = { [weak self] in self?.onEnter?() }
         tableView.onArrowLeft = { [weak self] in self?.onExit?() }
 
+        let menu = NSMenu()
+        let copyName = NSMenuItem(title: "Copy Name", action: #selector(copyName(_:)), keyEquivalent: "")
+        copyName.target = self
+        let copyPath = NSMenuItem(title: "Copy Path", action: #selector(copyPath(_:)), keyEquivalent: "")
+        copyPath.target = self
+        menu.addItem(copyName)
+        menu.addItem(copyPath)
+        tableView.menu = menu
+
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .controlBackgroundColor
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // Spinner centered over the scroll area.
@@ -194,6 +208,31 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     func tableViewSelectionDidChange(_ notification: Notification) {
         onSelectionChange?(selectedObject)
     }
+
+    // MARK: - Copy Name / Copy Path (right-click, Finder parity)
+
+    private func clickedItem() -> StorageObject? {
+        let row = tableView.clickedRow
+        guard row >= 0, row < items.count else { return nil }
+        return items[row]
+    }
+
+    @objc private func copyName(_ sender: Any?) {
+        guard let item = clickedItem() else { return }
+        copyToPasteboard(displayName(for: item))
+    }
+
+    @objc private func copyPath(_ sender: Any?) {
+        guard let item = clickedItem() else { return }
+        var key = item.key
+        if key.hasSuffix("/") { key.removeLast() }
+        copyToPasteboard("\(location.container)/\(key)")
+    }
+
+    private func copyToPasteboard(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+    }
 }
 
 // MARK: - ColumnNameCellView
@@ -268,7 +307,15 @@ final class ColumnBrowserViewController: NSViewController {
 
     var onSelectionChange: ((StorageObject?) -> Void)?
 
-    private(set) var location: BrowserLocation?
+    /// Fired when the deepest browse location changes, so the shared path bar updates.
+    var onLocationChange: ((BrowserLocation?) -> Void)?
+
+    private(set) var location: BrowserLocation? {
+        didSet {
+            guard location != oldValue else { return }
+            onLocationChange?(location)
+        }
+    }
 
     // MARK: - Private layout
 
