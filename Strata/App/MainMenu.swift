@@ -45,6 +45,12 @@ enum MainMenu {
         submenu("File") { menu in
             let newWindow = menu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newBrowserWindow(_:)), keyEquivalent: "n")
             newWindow.target = target
+            menu.addItem(.separator())
+            // Targets nil so it routes through the responder chain to the key
+            // window's BrowserSplitViewController. Cmd+K mirrors Finder's
+            // "Connect to Server".
+            menu.addItem(withTitle: "Connect to Azure Storage Account…", action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:)), keyEquivalent: "k")
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         }
     }
@@ -64,6 +70,8 @@ enum MainMenu {
 
     private static func viewMenuItem() -> NSMenuItem {
         submenu("View") { menu in
+            menu.addItem(withTitle: "Refresh", action: #selector(BrowserSplitViewController.refreshListing(_:)), keyEquivalent: "r")
+            menu.addItem(.separator())
             let toggleToolbar = menu.addItem(withTitle: "Hide Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "t")
             toggleToolbar.keyEquivalentModifierMask = [.command, .option]
             menu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
