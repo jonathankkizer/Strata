@@ -98,9 +98,8 @@ final class TransferQueue {
 
         item.task = Task { [weak self] in
             do {
-                let data = try await Self.readData(item.sourceURL)
                 try await item.provider.upload(
-                    data,
+                    from: item.sourceURL,
                     toKey: item.key,
                     in: item.container,
                     contentType: item.contentType,
@@ -147,11 +146,6 @@ final class TransferQueue {
     }
 
     // MARK: - Helpers
-
-    /// Read off the main actor so large files don't stall the UI.
-    nonisolated private static func readData(_ url: URL) async throws -> Data {
-        try await Task.detached(priority: .utility) { try Data(contentsOf: url) }.value
-    }
 
     nonisolated private static func describe(_ error: Error) -> String {
         if case StorageProviderError.dataPlaneForbidden = error {
