@@ -18,6 +18,14 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     /// Fired when the browse location changes, so the shared path bar can update.
     var onLocationChange: ((BrowserLocation?) -> Void)?
 
+    /// Fired when the user clicks a column header to change the sort, so the shared
+    /// sort state (menus, columns view) can follow.
+    var onSortChange: ((BrowseSort) -> Void)?
+
+    /// True while a sort is being applied programmatically, to distinguish it from a
+    /// user header click in `sortDescriptorsDidChange`.
+    private var isApplyingSort = false
+
     var location: BrowserLocation? {
         didSet {
             guard location != oldValue else { return }
@@ -119,6 +127,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         // Resize all columns to fit the pane width so content tracks the window
         // (and the inspector) instead of needing a horizontal scroll.
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // Show the default sort indicator (Name, ascending).
+        tableView.sortDescriptors = [NSSortDescriptor(key: Column.name.rawValue, ascending: true)]
 
         // Drag-and-drop upload from Finder.
         tableView.registerForDraggedTypes([.fileURL])
@@ -133,6 +143,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         copyPathItem.target = self
         menu.addItem(copyNameItem)
         menu.addItem(copyPathItem)
+        menu.addItem(.separator())
+        menu.addItem(SortMenu.makeItem(shortcuts: false))
         menu.addItem(.separator())
         let inspectorItem = NSMenuItem(title: "Show Inspector", action: #selector(BrowserSplitViewController.toggleObjectInspector(_:)), keyEquivalent: "")
         inspectorItem.target = nil   // routed via responder chain
@@ -152,9 +164,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         tableColumn.title = title
         tableColumn.width = width
         tableColumn.minWidth = minWidth
-        if column == .name || column == .size || column == .modified {
-            tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: true)
-        }
+        // Every column is sortable by clicking its header.
+        tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: true)
         tableColumn.headerCell.alignment = alignment
         tableView.addTableColumn(tableColumn)
     }
@@ -374,30 +385,31 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     // MARK: - Sorting
 
-    private func sortItems() {
-        let descriptor = tableView.sortDescriptors.first
-        let key = descriptor?.key ?? Column.name.rawValue
-        let ascending = descriptor?.ascending ?? true
+    /// The current sort, derived from the table's active sort descriptor.
+    var currentSort: BrowseSort {
+        guard let descriptor = tableView.sortDescriptors.first,
+              let key = SortKey(rawValue: descriptor.key ?? "") else { return BrowseSort() }
+        return BrowseSort(key: key, ascending: descriptor.ascending)
+    }
 
-        items.sort { lhs, rhs in
-            // Folders always precede blobs regardless of sort field.
-            if lhs.isPrefix != rhs.isPrefix { return lhs.isPrefix }
-            let ordered: Bool
-            switch key {
-            case Column.size.rawValue:
-                ordered = lhs.size < rhs.size
-            case Column.modified.rawValue:
-                ordered = (lhs.lastModified ?? .distantPast) < (rhs.lastModified ?? .distantPast)
-            default:
-                ordered = displayName(for: lhs).localizedStandardCompare(displayName(for: rhs)) == .orderedAscending
-            }
-            return ascending ? ordered : !ordered
-        }
+    /// Applies a sort programmatically (from a menu/context command).
+    func applySort(_ sort: BrowseSort) {
+        isApplyingSort = true
+        tableView.sortDescriptors = [NSSortDescriptor(key: sort.key.rawValue, ascending: sort.ascending)]
+        isApplyingSort = false
+        sortItems()
+        tableView.reloadData()
+    }
+
+    private func sortItems() {
+        let sort = currentSort
+        items.sort { sort.areInOrder($0, $1) }
     }
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         sortItems()
         tableView.reloadData()
+        if !isApplyingSort { onSortChange?(currentSort) }
     }
 
     // MARK: - NSTableViewDataSource / Delegate

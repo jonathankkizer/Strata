@@ -80,6 +80,10 @@ enum MainMenu {
             menu.addItem(withTitle: "as List", action: #selector(BrowserSplitViewController.showAsList(_:)), keyEquivalent: "1")
             menu.addItem(withTitle: "as Columns", action: #selector(BrowserSplitViewController.showAsColumns(_:)), keyEquivalent: "2")
             menu.addItem(.separator())
+            // Finder convention: Sort By, with ⌃⌥⌘1…5 for the fields.
+            let sortBy = menu.addItem(withTitle: "Sort By", action: nil, keyEquivalent: "")
+            sortBy.submenu = SortMenu.makeMenu(shortcuts: true)
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Refresh", action: #selector(BrowserSplitViewController.refreshListing(_:)), keyEquivalent: "r")
             let enclosing = menu.addItem(withTitle: "Enclosing Folder", action: #selector(BrowserSplitViewController.navigateToEnclosingFolder(_:)), keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1))
             enclosing.keyEquivalentModifierMask = [.command]
