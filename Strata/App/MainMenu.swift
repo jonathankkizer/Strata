@@ -72,11 +72,14 @@ enum MainMenu {
     private static func viewMenuItem() -> NSMenuItem {
         submenu("View") { menu in
             menu.addItem(withTitle: "Refresh", action: #selector(BrowserSplitViewController.refreshListing(_:)), keyEquivalent: "r")
+            let enclosing = menu.addItem(withTitle: "Enclosing Folder", action: #selector(BrowserSplitViewController.navigateToEnclosingFolder(_:)), keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1))
+            enclosing.keyEquivalentModifierMask = [.command]
             // Cmd+I: the Finder "Get Info" convention for a metadata inspector.
             menu.addItem(withTitle: "Show Inspector", action: #selector(BrowserSplitViewController.toggleObjectInspector(_:)), keyEquivalent: "i")
             menu.addItem(.separator())
             let toggleToolbar = menu.addItem(withTitle: "Hide Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "t")
             toggleToolbar.keyEquivalentModifierMask = [.command, .option]
+            menu.addItem(withTitle: "Customize Toolbar…", action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
                 .keyEquivalentModifierMask = [.command, .control]
         }

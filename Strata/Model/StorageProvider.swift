@@ -19,11 +19,11 @@ protocol StorageProvider: Sendable {
     /// Full metadata for a single object (a HEAD / Get Blob Properties).
     func fetchMetadata(for object: StorageObject, in container: StorageContainer) async throws -> ObjectMetadata
 
-    /// Writes `data` to `key`. The `plan` declares which REST operation is used —
+    /// Streams `fileURL` to `key`. The `plan` declares which REST operation is used —
     /// and therefore which storage event fires — so callers can predict and surface
     /// it before the upload happens. `onProgress` reports cumulative bytes sent and
     /// the total; it may be called from a background queue.
-    func upload(_ data: Data, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
+    func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
 }
 
 enum StorageProviderError: Error, Sendable {

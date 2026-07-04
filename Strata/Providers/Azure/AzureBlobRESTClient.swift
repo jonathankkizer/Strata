@@ -131,28 +131,32 @@ struct AzureBlobRESTClient: Sendable {
 
     // MARK: - Writes
 
-    /// Single-shot upload. Emits `PutBlob`.
-    func putBlob(container: String, key: String, data: Data, contentType: String?, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
+    /// Single-shot upload from a file. Emits `PutBlob`.
+    func putBlob(container: String, key: String, fileURL: URL, contentType: String?, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
         let url = blobURL(container: container, blobKey: key)
         var headers = ["x-ms-blob-type": "BlockBlob"]
         if let contentType { headers["Content-Type"] = contentType }
-        let delegate = onProgress.map { UploadProgressDelegate(baseOffset: 0, totalBytes: Int64(data.count), onProgress: $0) }
-        _ = try await perform(method: "PUT", url: url, body: data, extraHeaders: headers, delegate: delegate)
+        let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+        let delegate = onProgress.map { UploadProgressDelegate(baseOffset: 0, totalBytes: total, onProgress: $0) }
+        _ = try await perform(method: "PUT", url: url, body: .file(fileURL), extraHeaders: headers, delegate: delegate)
     }
 
-    /// Staged upload: Put Block × N, then Put Block List. Emits `PutBlockList` on
-    /// commit (even for a single block).
-    func putBlockList(container: String, key: String, data: Data, contentType: String?, blockSize: Int = 8 * 1024 * 1024, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
+    /// Staged upload from a file: Put Block × N, then Put Block List. Emits
+    /// `PutBlockList` on commit (even for a single block). Memory stays bounded
+    /// at one block (8 MiB default).
+    func putBlockList(container: String, key: String, fileURL: URL, contentType: String?, blockSize: Int = 8 * 1024 * 1024, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
         let url = blobURL(container: container, blobKey: key)
         let size = max(1, blockSize)
-        let total = Int64(data.count)
+        let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+
+        let handle = try FileHandle(forReadingFrom: fileURL)
+        defer { try? handle.close() }
 
         var blockIDs: [String] = []
-        var offset = 0
+        var offset: Int64 = 0
         var index = 0
-        while offset < data.count {
-            let end = min(offset + size, data.count)
-            let chunk = data.subdata(in: offset..<end)
+        while true {
+            guard let chunk = try handle.read(upToCount: size), !chunk.isEmpty else { break }
             let blockID = Data(String(format: "block-%08d", index).utf8).base64EncodedString()
 
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
@@ -163,10 +167,10 @@ struct AzureBlobRESTClient: Sendable {
             ]
             // Progress accumulates across blocks: this block's bytes offset by the
             // bytes already committed.
-            let delegate = onProgress.map { UploadProgressDelegate(baseOffset: Int64(offset), totalBytes: total, onProgress: $0) }
-            _ = try await perform(method: "PUT", url: components.url!, body: chunk, extraHeaders: [:], delegate: delegate)
+            let delegate = onProgress.map { UploadProgressDelegate(baseOffset: offset, totalBytes: total, onProgress: $0) }
+            _ = try await perform(method: "PUT", url: components.url!, body: .data(chunk), extraHeaders: [:], delegate: delegate)
             blockIDs.append(blockID)
-            offset = end
+            offset += Int64(chunk.count)
             index += 1
         }
         // An empty file still needs one commit with zero blocks.
@@ -179,10 +183,15 @@ struct AzureBlobRESTClient: Sendable {
         components.queryItems = [URLQueryItem(name: "comp", value: "blocklist")]
         var headers = ["Content-Type": "application/xml"]
         if let contentType { headers["x-ms-blob-content-type"] = contentType }
-        _ = try await perform(method: "PUT", url: components.url!, body: Data(xml.utf8), extraHeaders: headers)
+        _ = try await perform(method: "PUT", url: components.url!, body: .data(Data(xml.utf8)), extraHeaders: headers)
     }
 
     // MARK: - Transport
+
+    private enum RequestBody {
+        case data(Data)
+        case file(URL)
+    }
 
     private func get(_ url: URL) async throws -> Data {
         try await perform(method: "GET", url: url, body: nil, extraHeaders: [:]).data
@@ -191,7 +200,7 @@ struct AzureBlobRESTClient: Sendable {
     /// Signs, sends, and validates a request. Returns body + response so HEAD
     /// callers can read headers. Maps the 403 RBAC trap and 401 specifically.
     @discardableResult
-    private func perform(method: String, url: URL, body: Data?, extraHeaders: [String: String], delegate: (any URLSessionTaskDelegate)? = nil) async throws -> (data: Data, response: HTTPURLResponse) {
+    private func perform(method: String, url: URL, body: RequestBody?, extraHeaders: [String: String], delegate: (any URLSessionTaskDelegate)? = nil) async throws -> (data: Data, response: HTTPURLResponse) {
         let token = try await tokenSource.token(asOf: Date())
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -203,9 +212,12 @@ struct AzureBlobRESTClient: Sendable {
 
         let data: Data
         let response: URLResponse
-        if let body {
-            (data, response) = try await session.upload(for: request, from: body, delegate: delegate)
-        } else {
+        switch body {
+        case .data(let bodyData):
+            (data, response) = try await session.upload(for: request, from: bodyData, delegate: delegate)
+        case .file(let fileURL):
+            (data, response) = try await session.upload(for: request, fromFile: fileURL, delegate: delegate)
+        case nil:
             (data, response) = try await session.data(for: request)
         }
 
@@ -284,9 +296,10 @@ extension ObjectMetadata {
 //
 // The List APIs return XML. Foundation's XMLParser (no dependency) is used
 // synchronously inside each call — the delegates never cross an actor boundary, so
-// they need not be Sendable.
+// they need not be Sendable. Internal (not private) so they can be unit-tested via
+// `@testable import`.
 
-private final class ContainerListXMLParser: NSObject, XMLParserDelegate {
+final class ContainerListXMLParser: NSObject, XMLParserDelegate {
     private var containers: [StorageContainer] = []
     private var nextMarker: String?
     private var text = ""
@@ -330,7 +343,7 @@ private final class ContainerListXMLParser: NSObject, XMLParserDelegate {
     }
 }
 
-private final class BlobListXMLParser: NSObject, XMLParserDelegate {
+final class BlobListXMLParser: NSObject, XMLParserDelegate {
     private var objects: [StorageObject] = []
     private var nextMarker: String?
     private var text = ""

@@ -88,17 +88,18 @@ final class TransfersPopoverViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        NotificationCenter.default.addObserver(forName: .transferQueueDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reload() }
-        }
-        NotificationCenter.default.addObserver(forName: .transferQueueProgress, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateVisibleProgress() }
-        }
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(reload), name: .transferQueueDidChange, object: nil)
+        center.addObserver(self, selector: #selector(updateVisibleProgress), name: .transferQueueProgress, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Updating
 
-    private func reload() {
+    @objc private func reload() {
         tableView.reloadData()
         let count = transfers.count
         emptyLabel.isHidden = count > 0
@@ -108,7 +109,7 @@ final class TransfersPopoverViewController: NSViewController {
         preferredContentSize = NSSize(width: contentWidth, height: 40 + (count == 0 ? 80 : listHeight))
     }
 
-    private func updateVisibleProgress() {
+    @objc private func updateVisibleProgress() {
         let range = tableView.rows(in: tableView.visibleRect)
         guard range.length > 0 else { return }
         for row in range.location..<(range.location + range.length) where row < transfers.count {

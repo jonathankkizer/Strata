@@ -44,14 +44,14 @@ final class AzureBlobProvider: StorageProvider {
         try await client.fetchProperties(container: container.name, blobKey: object.key)
     }
 
-    func upload(_ data: Data, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+    func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         // The plan's predicted operation is the source of truth so the emitted
         // event matches what the UI showed the user before they confirmed.
         switch plan.predictedCommitAPI {
         case .putBlockList:
-            try await client.putBlockList(container: container.name, key: key, data: data, contentType: contentType, onProgress: onProgress)
+            try await client.putBlockList(container: container.name, key: key, fileURL: fileURL, contentType: contentType, onProgress: onProgress)
         default:
-            try await client.putBlob(container: container.name, key: key, data: data, contentType: contentType, onProgress: onProgress)
+            try await client.putBlob(container: container.name, key: key, fileURL: fileURL, contentType: contentType, onProgress: onProgress)
         }
     }
 }
