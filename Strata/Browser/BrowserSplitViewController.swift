@@ -46,9 +46,16 @@ final class BrowserSplitViewController: NSSplitViewController {
             self.inspector.present(object: object, provider: self.provider, containerName: self.currentContainerName)
         }
 
-        NotificationCenter.default.addObserver(forName: .transferQueueDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.transferQueueChanged() }
+        objectList.onDropFiles = { [weak self] urls in
+            guard let self, self.provider != nil, let location = self.objectList.location else { return }
+            self.confirmUpload(urls: urls, to: location)
         }
+
+        NotificationCenter.default.addObserver(self, selector: #selector(transferQueueChanged), name: .transferQueueDidChange, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Actions
@@ -107,6 +114,8 @@ final class BrowserSplitViewController: NSSplitViewController {
     // Enable the actions only when they make sense.
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
+        case #selector(navigateToEnclosingFolder(_:)):
+            return objectList.canNavigateUp
         case #selector(refreshListing(_:)):
             return provider != nil
         case #selector(uploadFiles(_:)):
@@ -152,7 +161,8 @@ final class BrowserSplitViewController: NSSplitViewController {
         let alert = NSAlert()
         alert.messageText = urls.count == 1 ? "Upload “\(urls[0].lastPathComponent)”?" : "Upload \(urls.count) files?"
         let destination = location.prefix.isEmpty ? "\(location.container) (root)" : "\(location.container)/\(location.prefix)"
-        let lines = planned.map { "• \(lastComponent($0.key)) — \($0.plan.predictedEventSummary)" }
+        var lines = planned.prefix(8).map { "• \(lastComponent($0.key)) — \($0.plan.predictedEventSummary)" }
+        if planned.count > 8 { lines.append("…and \(planned.count - 8) more") }
         alert.informativeText = "Destination: \(destination)\n\n" + lines.joined(separator: "\n")
         alert.addButton(withTitle: "Upload")
         alert.addButton(withTitle: "Cancel")
@@ -183,8 +193,12 @@ final class BrowserSplitViewController: NSSplitViewController {
         }
     }
 
+    @objc func navigateToEnclosingFolder(_ sender: Any?) {
+        objectList.navigateUp()
+    }
+
     /// Refresh the listing when a transfer finishes into the location on screen.
-    private func transferQueueChanged() {
+    @objc private func transferQueueChanged() {
         guard let location = objectList.location else { return }
         var shouldReload = false
         for transfer in TransferQueue.shared.transfers

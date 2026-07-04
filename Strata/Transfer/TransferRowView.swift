@@ -75,7 +75,6 @@ final class TransferRowView: NSView {
         progressBar.maxValue = 1
         progressBar.controlSize = .small
         progressBar.translatesAutoresizingMaskIntoConstraints = false
-        progressBar.widthAnchor.constraint(equalToConstant: 288).isActive = true
 
         statusField.font = .systemFont(ofSize: 10)
         statusField.textColor = .secondaryLabelColor
@@ -85,9 +84,9 @@ final class TransferRowView: NSView {
         textStack.alignment = .leading
         textStack.spacing = 3
         textStack.translatesAutoresizingMaskIntoConstraints = false
+        progressBar.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
 
         actionButton.isBordered = false
-        actionButton.bezelStyle = .regularSquare
         actionButton.imagePosition = .imageOnly
         actionButton.target = self
         actionButton.action = #selector(actionClicked)
@@ -106,6 +105,7 @@ final class TransferRowView: NSView {
             outer.trailingAnchor.constraint(equalTo: trailingAnchor),
             outer.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        setAccessibilityRole(.group)
     }
 
     func update(with item: TransferItem) {
@@ -142,6 +142,7 @@ final class TransferRowView: NSView {
             statusField.textColor = .systemRed
             configureAction(symbol: "arrow.clockwise.circle", tint: .controlAccentColor, enabled: true, tooltip: "Retry")
         }
+        setAccessibilityLabel("\(item.fileName), \(statusField.stringValue)")
     }
 
     private func configureAction(symbol: String, tint: NSColor, enabled: Bool, tooltip: String?) {
@@ -149,6 +150,7 @@ final class TransferRowView: NSView {
         actionButton.contentTintColor = tint
         actionButton.isEnabled = enabled
         actionButton.toolTip = tooltip
+        actionButton.setAccessibilityLabel(tooltip)
     }
 
     private func refreshBadgeColor() {

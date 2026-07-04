@@ -41,7 +41,7 @@ final class TransfersToolbarButton: NSButton {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        bezelStyle = .texturedRounded
+        bezelStyle = .toolbar
         setButtonType(.momentaryPushIn)
         imagePosition = .imageOnly
         image = NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Transfers")
@@ -65,8 +65,10 @@ final class TransfersToolbarButton: NSButton {
         if active {
             image = nil
             ring.progress = fraction
+            setAccessibilityValue("\(Int(fraction * 100))% complete")
         } else {
             image = NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Transfers")
+            setAccessibilityValue(nil)
         }
     }
 }

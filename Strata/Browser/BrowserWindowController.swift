@@ -6,6 +6,8 @@ import AppKit
 @MainActor
 final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
 
+    var onWindowClose: (() -> Void)?
+
     private let splitViewController = BrowserSplitViewController()
     private let transfersButton = TransfersToolbarButton(frame: NSRect(x: 0, y: 0, width: 40, height: 24))
     private lazy var transfersPopover: NSPopover = {
@@ -33,7 +35,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.title = "Strata"
         window.isRestorable = true
         window.setFrameAutosaveName("StrataBrowserWindow")
-        window.tabbingMode = .preferred
+        window.tabbingMode = .automatic
         window.tabbingIdentifier = "StrataBrowser"
         window.minSize = NSSize(width: 720, height: 480)
 
@@ -43,11 +45,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.contentViewController = splitViewController
         configureToolbar(for: window)
         observeTransferQueue()
-        window.center()
+        if !window.setFrameUsingName("StrataBrowserWindow") { window.center() }
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowWillClose(_ notification: Notification) {
+        onWindowClose?()
     }
 
     // MARK: - Transfer queue
@@ -87,7 +95,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = false
+        toolbar.autosavesConfiguration = true
         window.toolbar = toolbar
         window.toolbarStyle = .unified
     }
@@ -143,6 +151,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             item.label = "Transfers"
             item.toolTip = "Transfers"
             item.view = transfersButton
+            let menuItem = NSMenuItem(title: "Transfers", action: #selector(toggleTransfers(_:)), keyEquivalent: "")
+            menuItem.target = self
+            item.menuFormRepresentation = menuItem
             return item
         default:
             return nil

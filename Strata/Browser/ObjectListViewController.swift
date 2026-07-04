@@ -11,6 +11,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     /// Fired when the table's selection changes (single selection, or nil).
     var onSelectionChange: ((StorageObject?) -> Void)?
 
+    /// Fired when files are dropped from Finder onto the table; caller handles upload.
+    var onDropFiles: (([URL]) -> Void)?
+
     var location: BrowserLocation? {
         didSet {
             guard location != oldValue else { return }
@@ -110,6 +113,25 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         tableView.doubleAction = #selector(tableDoubleClicked(_:))
         tableView.target = self
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+
+        // Drag-and-drop upload from Finder.
+        tableView.registerForDraggedTypes([.fileURL])
+
+        // Context menu (autoenablesItems = false — we manage Copy items explicitly).
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.delegate = self
+        let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyName(_:)), keyEquivalent: "")
+        copyNameItem.target = self
+        let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(copyPath(_:)), keyEquivalent: "")
+        copyPathItem.target = self
+        menu.addItem(copyNameItem)
+        menu.addItem(copyPathItem)
+        menu.addItem(.separator())
+        let inspectorItem = NSMenuItem(title: "Show Inspector", action: #selector(BrowserSplitViewController.toggleObjectInspector(_:)), keyEquivalent: "")
+        inspectorItem.target = nil   // routed via responder chain
+        menu.addItem(inspectorItem)
+        tableView.menu = menu
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -267,6 +289,20 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         self.location = BrowserLocation(container: location.container, prefix: item.key)
     }
 
+    // MARK: - Enclosing-folder navigation
+
+    /// True when there is at least one folder segment above the current listing.
+    var canNavigateUp: Bool { !(location?.prefix.isEmpty ?? true) }
+
+    /// Moves to the parent folder. No-op at the container root.
+    func navigateUp() {
+        guard canNavigateUp, let location else { return }
+        let segments = location.segments
+        // Drop the last segment; re-join remaining ones as a slash-terminated prefix.
+        let parentPrefix = segments.dropLast().map { $0 + "/" }.joined()
+        self.location = BrowserLocation(container: location.container, prefix: parentPrefix)
+    }
+
     // MARK: - Sorting
 
     private func sortItems() {
@@ -383,5 +419,97 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
+    }
+
+    // MARK: - Drag-and-drop upload
+
+    func tableView(_ tableView: NSTableView,
+                   validateDrop info: NSDraggingInfo,
+                   proposedRow row: Int,
+                   proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        guard location != nil,
+              info.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
+                  options: [.urlReadingFileURLsOnly: true]) else { return [] }
+        tableView.setDropRow(-1, dropOperation: .on)
+        return .copy
+    }
+
+    func tableView(_ tableView: NSTableView,
+                   acceptDrop info: NSDraggingInfo,
+                   row: Int,
+                   dropOperation: NSTableView.DropOperation) -> Bool {
+        guard let rawURLs = info.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] else { return false }
+
+        // Exclude directories; only upload regular files.
+        let fileURLs = rawURLs.filter { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
+        }
+        guard !fileURLs.isEmpty else { return false }
+        onDropFiles?(fileURLs)
+        return true
+    }
+
+    // MARK: - Context menu actions
+
+    @objc private func copyName(_ sender: Any?) {
+        let names = selectedObjects().map { displayName(for: $0) }.joined(separator: "\n")
+        guard !names.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(names, forType: .string)
+    }
+
+    @objc private func copyPath(_ sender: Any?) {
+        let keys = selectedObjects().map { $0.key }.joined(separator: "\n")
+        guard !keys.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(keys, forType: .string)
+    }
+
+    /// Returns the objects for the current selection, preferring clicked row when
+    /// it is outside the selection (handled by menuNeedsUpdate before this runs).
+    private func selectedObjects() -> [StorageObject] {
+        tableView.selectedRowIndexes.compactMap { idx in
+            idx < items.count ? items[idx] : nil
+        }
+    }
+
+    // MARK: - Edit ▸ Copy (Cmd+C)
+
+    @objc func copy(_ sender: Any?) {
+        copyPath(sender)
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension ObjectListViewController: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        // Follow Finder: if the clicked row is outside the selection, select it alone.
+        let clicked = tableView.clickedRow
+        if clicked >= 0, !tableView.selectedRowIndexes.contains(clicked) {
+            tableView.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
+        }
+
+        // Determine whether there is anything to copy.
+        let hasTarget = clicked >= 0 || tableView.selectedRow >= 0
+        menu.items.forEach { item in
+            if item.action == #selector(copyName(_:)) || item.action == #selector(copyPath(_:)) {
+                item.isEnabled = hasTarget
+            }
+        }
+    }
+}
+
+// MARK: - NSUserInterfaceValidations
+
+extension ObjectListViewController: NSUserInterfaceValidations {
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)) {
+            return tableView.selectedRow >= 0
+        }
+        return true
     }
 }
