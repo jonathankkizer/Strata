@@ -116,7 +116,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         tableView.doubleAction = #selector(tableDoubleClicked(_:))
         tableView.target = self
         tableView.onCommandDown = { [weak self] in self?.openSelection() }
-        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        // Resize all columns to fit the pane width so content tracks the window
+        // (and the inspector) instead of needing a horizontal scroll.
+        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
 
         // Drag-and-drop upload from Finder.
         tableView.registerForDraggedTypes([.fileURL])

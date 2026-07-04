@@ -15,9 +15,12 @@ final class KeyNavTableView: NSTableView {
     private static let downArrow = String(UnicodeScalar(NSDownArrowFunctionKey)!)
     private static let leftArrow = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
     private static let rightArrow = String(UnicodeScalar(NSRightArrowFunctionKey)!)
+    /// The "real" modifiers — arrow keys always also carry .function and
+    /// .numericPad, which would otherwise break exact modifier matches.
+    private static let realModifiers: NSEvent.ModifierFlags = [.command, .shift, .control, .option]
 
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let flags = event.modifierFlags.intersection(Self.realModifiers)
         let chars = event.charactersIgnoringModifiers
 
         if flags == .command, chars == Self.downArrow, let onCommandDown {
