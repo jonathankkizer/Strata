@@ -76,7 +76,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         // scrollView and emptyStateView occupy the same region below the path bar.
         NSLayoutConstraint.activate([
-            pathControl.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
+            // Pin below the toolbar (safe area), not the window top, so the path bar
+            // doesn't sit behind the translucent titlebar and ghost through it.
+            pathControl.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
             pathControl.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             pathControl.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
 
@@ -441,9 +443,10 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         case .name:
             let cell = nameCell()
             cell.textField?.stringValue = displayName(for: item)
-            let symbol = item.isPrefix ? "folder.fill" : "doc"
-            cell.imageView?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-            cell.imageView?.contentTintColor = item.isPrefix ? .controlAccentColor : .secondaryLabelColor
+            // Real macOS icons (the actual folder, a Markdown/CSV document icon…),
+            // matching Finder rather than a tinted SF Symbol.
+            cell.imageView?.image = BlobIcon.image(for: item)
+            cell.imageView?.contentTintColor = nil
             return cell
         case .size:
             return textCell(item.isPrefix ? "\u{2014}" : byteFormatter.string(fromByteCount: item.size), alignment: .right)
@@ -497,6 +500,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         let imageView = NSImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.setContentHuggingPriority(.required, for: .horizontal)
+        imageView.imageScaling = .scaleProportionallyUpOrDown
 
         let textField = NSTextField(labelWithString: "")
         textField.lineBreakMode = .byTruncatingTail
@@ -512,6 +516,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
             imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
             imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             imageView.widthAnchor.constraint(equalToConstant: 16),
+            imageView.heightAnchor.constraint(equalToConstant: 16),
             textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 6),
             textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
             textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),

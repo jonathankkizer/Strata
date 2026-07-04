@@ -71,6 +71,10 @@ enum MainMenu {
 
     private static func viewMenuItem() -> NSMenuItem {
         submenu("View") { menu in
+            // Finder convention: ⌘1 / ⌘2 switch view layout.
+            menu.addItem(withTitle: "as List", action: #selector(BrowserSplitViewController.showAsList(_:)), keyEquivalent: "1")
+            menu.addItem(withTitle: "as Columns", action: #selector(BrowserSplitViewController.showAsColumns(_:)), keyEquivalent: "2")
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Refresh", action: #selector(BrowserSplitViewController.refreshListing(_:)), keyEquivalent: "r")
             let enclosing = menu.addItem(withTitle: "Enclosing Folder", action: #selector(BrowserSplitViewController.navigateToEnclosingFolder(_:)), keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1))
             enclosing.keyEquivalentModifierMask = [.command]
