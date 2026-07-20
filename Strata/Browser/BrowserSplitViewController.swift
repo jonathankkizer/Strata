@@ -66,9 +66,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             self.startUpload(sources: urls, to: location)
         }
 
-        browseModeControl.selectedSegment = content.mode.rawValue
         browseModeControl.target = self
         browseModeControl.action = #selector(switchBrowseMode(_:))
+        // Restore the last-used browse layout (List/Columns) from the previous launch.
+        setBrowseMode(BrowseMode(rawValue: StrataDefaults.browseMode) ?? .list)
 
         NotificationCenter.default.addObserver(self, selector: #selector(transferQueueChanged), name: .transferQueueDidChange, object: nil)
     }
@@ -109,6 +110,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     private func setBrowseMode(_ mode: BrowseMode) {
         content.mode = mode
         browseModeControl.selectedSegment = mode.rawValue
+        StrataDefaults.browseMode = mode.rawValue
     }
 
     @objc func toggleObjectInspector(_ sender: Any?) {

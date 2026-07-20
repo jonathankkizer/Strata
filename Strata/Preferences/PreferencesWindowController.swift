@@ -48,8 +48,11 @@ final class PreferencesWindowController: NSWindowController {
         window.toolbarStyle = .preference
         window.toolbar = toolbar
 
-        switchPane("general")
-        toolbar.selectedItemIdentifier = NSToolbarItem.Identifier("general")
+        // Restore the last-selected pane, falling back to General if the saved one
+        // no longer exists.
+        let initialPane = StrataDefaults.preferencesPane.flatMap { panes[$0] != nil ? $0 : nil } ?? "general"
+        switchPane(initialPane)
+        toolbar.selectedItemIdentifier = NSToolbarItem.Identifier(initialPane)
         window.center()
     }
 
@@ -58,6 +61,7 @@ final class PreferencesWindowController: NSWindowController {
     func switchPane(_ identifier: String) {
         guard let pane = panes[identifier], let window else { return }
         currentPaneIdentifier = identifier
+        StrataDefaults.preferencesPane = identifier
         window.title = pane.label
         window.contentViewController = pane.viewController
         // Size the window to the pane's content (contentViewController assignment

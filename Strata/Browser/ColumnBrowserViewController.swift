@@ -24,6 +24,8 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     var onEnter: (() -> Void)?
     /// ← — move focus to the parent column.
     var onExit: (() -> Void)?
+    /// Resolves an object to its shareable URL (provider-supplied), for Copy URL.
+    var objectURL: ((StorageObject) -> URL?)?
 
     /// Make this column's table the first responder (used by ←/→ navigation).
     func focus() {
@@ -78,8 +80,11 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         copyName.target = self
         let copyPath = NSMenuItem(title: "Copy Path", action: #selector(copyPath(_:)), keyEquivalent: "")
         copyPath.target = self
+        let copyURL = NSMenuItem(title: "Copy URL", action: #selector(copyURL(_:)), keyEquivalent: "")
+        copyURL.target = self
         menu.addItem(copyName)
         menu.addItem(copyPath)
+        menu.addItem(copyURL)
         menu.addItem(.separator())
         menu.addItem(SortMenu.makeItem(shortcuts: false))
         tableView.menu = menu
@@ -233,6 +238,15 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         var key = item.key
         if key.hasSuffix("/") { key.removeLast() }
         copyToPasteboard("\(location.container)/\(key)")
+    }
+
+    @objc private func copyURL(_ sender: Any?) {
+        guard let item = clickedItem(), !item.isPrefix, let url = objectURL?(item) else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.string, .URL], owner: nil)
+        pasteboard.setString(url.absoluteString, forType: .string)
+        pasteboard.setString(url.absoluteString, forType: .URL)
     }
 
     private func copyToPasteboard(_ string: String) {
@@ -479,7 +493,28 @@ final class ColumnBrowserViewController: NSViewController {
             guard let self, let col else { return }
             self.focusParent(of: col)
         }
+        col.objectURL = { [weak self] object in
+            guard let self, let provider = self.provider else { return nil }
+            return provider.objectURL(forKey: object.key, in: StorageContainer(name: location.container))
+        }
         return col
+    }
+
+    /// Cmd+C: copy the deepest selected object with a path (plain text) and, for a
+    /// real blob, its shareable URL — matching the list surface.
+    @objc func copy(_ sender: Any?) {
+        guard let col = columns.last(where: { $0.selectedObject != nil }),
+              let object = col.selectedObject else { return }
+        var key = object.key
+        if key.hasSuffix("/") { key.removeLast() }
+        let item = NSPasteboardItem()
+        item.setString("\(col.location.container)/\(key)", forType: .string)
+        if !object.isPrefix, let provider,
+           let url = provider.objectURL(forKey: object.key, in: StorageContainer(name: col.location.container)) {
+            item.setString(url.absoluteString, forType: .URL)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([item])
     }
 
     /// Move into the selected folder's (already-open) child column and focus it.

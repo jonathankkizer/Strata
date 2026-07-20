@@ -23,6 +23,16 @@ final class S3Provider: StorageProvider {
         throw StorageProviderError.notImplemented
     }
 
+    func objectURL(forKey key: String, in container: StorageContainer) -> URL? {
+        // The canonical s3:// URI is well-defined from bucket + key even while the
+        // SDK-backed data path is still stubbed.
+        var components = URLComponents()
+        components.scheme = "s3"
+        components.host = container.name
+        components.path = "/" + key
+        return components.url
+    }
+
     func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         throw StorageProviderError.notImplemented
     }

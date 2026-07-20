@@ -19,6 +19,11 @@ protocol StorageProvider: Sendable {
     /// Full metadata for a single object (a HEAD / Get Blob Properties).
     func fetchMetadata(for object: StorageObject, in container: StorageContainer) async throws -> ObjectMetadata
 
+    /// A stable, shareable URL for an object: the https blob URL (Azure) or the
+    /// `s3://` URI (S3). Used for "Copy URL" and the pasteboard's URL
+    /// representation. Nil when the provider can't yet form one.
+    func objectURL(forKey key: String, in container: StorageContainer) -> URL?
+
     /// Streams `fileURL` to `key`. The `plan` declares which REST operation is used —
     /// and therefore which storage event fires — so callers can predict and surface
     /// it before the upload happens. `onProgress` reports cumulative bytes sent and

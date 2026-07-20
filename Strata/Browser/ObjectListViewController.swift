@@ -141,8 +141,11 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         copyNameItem.target = self
         let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(copyPath(_:)), keyEquivalent: "")
         copyPathItem.target = self
+        let copyURLItem = NSMenuItem(title: "Copy URL", action: #selector(copyURL(_:)), keyEquivalent: "")
+        copyURLItem.target = self
         menu.addItem(copyNameItem)
         menu.addItem(copyPathItem)
+        menu.addItem(copyURLItem)
         menu.addItem(.separator())
         menu.addItem(SortMenu.makeItem(shortcuts: false))
         menu.addItem(.separator())
@@ -542,15 +545,37 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     @objc private func copyPath(_ sender: Any?) {
         // Full path (container/key), matching the path bar and columns view.
-        let container = location?.container ?? ""
-        let paths = selectedObjects().map { object -> String in
-            var key = object.key
-            if key.hasSuffix("/") { key.removeLast() }
-            return container.isEmpty ? key : "\(container)/\(key)"
-        }.joined(separator: "\n")
+        let paths = selectedObjects().map(fullPath(for:)).joined(separator: "\n")
         guard !paths.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(paths, forType: .string)
+    }
+
+    @objc private func copyURL(_ sender: Any?) {
+        let urls = selectedObjectURLs().map(\.absoluteString)
+        guard !urls.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.string, .URL], owner: nil)
+        pasteboard.setString(urls.joined(separator: "\n"), forType: .string)
+        if urls.count == 1 { pasteboard.setString(urls[0], forType: .URL) }
+    }
+
+    /// The container/key path for one object, matching the path bar's format.
+    private func fullPath(for object: StorageObject) -> String {
+        let container = location?.container ?? ""
+        var key = object.key
+        if key.hasSuffix("/") { key.removeLast() }
+        return container.isEmpty ? key : "\(container)/\(key)"
+    }
+
+    /// Shareable URLs for the real blobs (not folders) in the current selection.
+    private func selectedObjectURLs() -> [URL] {
+        guard let location else { return [] }
+        let container = StorageContainer(name: location.container)
+        return selectedObjects().compactMap { object in
+            object.isPrefix ? nil : provider?.objectURL(forKey: object.key, in: container)
+        }
     }
 
     /// Returns the objects for the current selection, preferring clicked row when
@@ -563,8 +588,27 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     // MARK: - Edit ▸ Copy (Cmd+C)
 
+    /// Writes the selection to the pasteboard with multiple representations so
+    /// each target gets something sensible: plain text (container/key paths) for
+    /// editors, plus a shareable URL per real blob for browsers and drop targets.
+    /// The first item carries the full joined path list so single-string targets
+    /// get every selected object, not just the first.
     @objc func copy(_ sender: Any?) {
-        copyPath(sender)
+        let objects = selectedObjects()
+        guard !objects.isEmpty, let location else { return }
+        let container = StorageContainer(name: location.container)
+        let joinedPaths = objects.map(fullPath(for:)).joined(separator: "\n")
+
+        let items: [NSPasteboardItem] = objects.enumerated().map { index, object in
+            let item = NSPasteboardItem()
+            item.setString(index == 0 ? joinedPaths : fullPath(for: object), forType: .string)
+            if !object.isPrefix, let url = provider?.objectURL(forKey: object.key, in: container) {
+                item.setString(url.absoluteString, forType: .URL)
+            }
+            return item
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects(items)
     }
 }
 
@@ -578,11 +622,18 @@ extension ObjectListViewController: NSMenuDelegate {
             tableView.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
         }
 
-        // Determine whether there is anything to copy.
+        // Determine whether there is anything to copy. Copy URL needs a real blob
+        // (folders have no shareable object URL).
         let hasTarget = clicked >= 0 || tableView.selectedRow >= 0
+        let hasBlobTarget = selectedObjects().contains { !$0.isPrefix }
         menu.items.forEach { item in
-            if item.action == #selector(copyName(_:)) || item.action == #selector(copyPath(_:)) {
+            switch item.action {
+            case #selector(copyName(_:)), #selector(copyPath(_:)):
                 item.isEnabled = hasTarget
+            case #selector(copyURL(_:)):
+                item.isEnabled = hasBlobTarget
+            default:
+                break
             }
         }
     }
