@@ -88,7 +88,9 @@ final class BrowserContentViewController: NSViewController {
 
     // MARK: - Sorting (shared across both views)
 
-    private(set) var sort = BrowseSort()
+    private(set) var sort = StrataDefaults.sort {
+        didSet { StrataDefaults.sort = sort }
+    }
 
     /// From a menu / context "Sort By" command: pick the field (toggling direction if
     /// it's already the sort field), and apply to both views.
@@ -165,6 +167,11 @@ final class BrowserContentViewController: NSViewController {
 
         // A list header click updates the shared sort so the columns view + menus follow.
         list.onSortChange = { [weak self] newSort in self?.handleListSortChange(newSort) }
+
+        // Restore the persisted sort into both surfaces (drives the list's header
+        // indicator and the columns ordering) before any data loads.
+        list.applySort(sort)
+        columns.applySort(sort)
     }
 
     private func configurePathBar() {

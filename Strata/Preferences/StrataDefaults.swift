@@ -22,4 +22,39 @@ enum StrataDefaults {
         get { UserDefaults.standard.bool(forKey: inspectorVisibleKey) }
         set { UserDefaults.standard.set(newValue, forKey: inspectorVisibleKey) }
     }
+
+    private static let browseModeKey = "BrowseMode"
+
+    /// The last browse layout (List vs Columns), restored on the next launch.
+    /// `UserDefaults.integer` defaults to 0, which is `.list`.
+    static var browseMode: Int {
+        get { UserDefaults.standard.integer(forKey: browseModeKey) }
+        set { UserDefaults.standard.set(newValue, forKey: browseModeKey) }
+    }
+
+    private static let sortKeyKey = "BrowseSortKey"
+    private static let sortAscendingKey = "BrowseSortAscending"
+
+    /// The last browse sort (field + direction), restored on the next launch.
+    /// Unset defaults to Name ascending, matching a fresh `BrowseSort`.
+    static var sort: BrowseSort {
+        get {
+            let key = UserDefaults.standard.string(forKey: sortKeyKey).flatMap(SortKey.init) ?? BrowseSort().key
+            let ascending = UserDefaults.standard.object(forKey: sortAscendingKey) as? Bool ?? true
+            return BrowseSort(key: key, ascending: ascending)
+        }
+        set {
+            UserDefaults.standard.set(newValue.key.rawValue, forKey: sortKeyKey)
+            UserDefaults.standard.set(newValue.ascending, forKey: sortAscendingKey)
+        }
+    }
+
+    private static let preferencesPaneKey = "PreferencesPane"
+
+    /// The last-selected Preferences pane identifier, restored when the window
+    /// reopens. Nil until the user has switched panes.
+    static var preferencesPane: String? {
+        get { UserDefaults.standard.string(forKey: preferencesPaneKey) }
+        set { UserDefaults.standard.set(newValue, forKey: preferencesPaneKey) }
+    }
 }
