@@ -6,57 +6,113 @@
 # nothing lands in the shell history, the process list, or a file. The .p12 is
 # read from a path you supply and is never copied anywhere.
 #
-# Run it from the repo:  ./scripts/setup-release-secrets.sh ~/Desktop/DeveloperID.p12
+# The certificate is verified first — imported into a throwaway keychain using the
+# same command CI will use — so a .p12 that cannot actually sign is caught here
+# rather than half way through a release six months from now. The signing identity
+# and team ID are then read off the certificate itself.
+#
+# Run from anywhere:
+#   ~/code/personal/Strata/scripts/setup-release-secrets.sh ~/Desktop/Certificates.p12
 
 set -euo pipefail
 
+# Work from the repo this script lives in, so it does not matter where it is run.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 P12_PATH="${1:-}"
 if [[ -z "$P12_PATH" || ! -f "$P12_PATH" ]]; then
-    echo "usage: $0 /path/to/DeveloperID.p12" >&2
-    echo >&2
-    echo "Export it from Keychain Access: My Certificates -> your Developer ID" >&2
-    echo "Application certificate -> right-click -> Export -> .p12" >&2
+    cat >&2 <<'USAGE'
+usage: setup-release-secrets.sh /path/to/certificate.p12
+
+Export the certificate from the Mac that holds it:
+
+  Keychain Access -> My Certificates -> your "Developer ID Application"
+  certificate -> right-click -> Export -> .p12 (Keychain Access names it
+  Certificates.p12 by default), and set a password when asked.
+
+It must come from My Certificates, which exports the certificate *and its
+private key*. A .cer downloaded from developer.apple.com is the public
+certificate only and cannot sign anything.
+USAGE
     exit 1
 fi
 
-# These are not secrets — they are embedded in every signed binary you ship — but
-# the workflow reads them as secrets, so they are set the same way.
-DEFAULT_IDENTITY="Developer ID Application: Jonathan Kizer (8QDNBA629H)"
-DEFAULT_TEAM_ID="8QDNBA629H"
-
 REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 ACCOUNT="$(gh api user --jq .login)"
-echo "Repository: $REPO"
+echo "Repository:       $REPO"
 echo "Authenticated as: $ACCOUNT"
+echo "Certificate:      $P12_PATH"
 read -r -p "Continue? [y/N] " CONFIRM
 [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]] || { echo "Aborted."; exit 1; }
 echo
+
+# --- Verify the certificate can actually sign -------------------------------
+
+read -r -s -p "Password you set when exporting the .p12: " P12_PASSWORD; echo
+
+VERIFY_DIR="$(mktemp -d)"
+VERIFY_KEYCHAIN="$VERIFY_DIR/verify.keychain-db"
+cleanup() {
+    security delete-keychain "$VERIFY_KEYCHAIN" >/dev/null 2>&1 || true
+    rm -rf "$VERIFY_DIR"
+}
+trap cleanup EXIT
+
+VERIFY_PASSWORD="$(openssl rand -base64 16)"
+security create-keychain -p "$VERIFY_PASSWORD" "$VERIFY_KEYCHAIN" >/dev/null
+security unlock-keychain -p "$VERIFY_PASSWORD" "$VERIFY_KEYCHAIN" >/dev/null
+
+# Same import command the release workflow runs, so this proves that path works.
+if ! security import "$P12_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 \
+        -k "$VERIFY_KEYCHAIN" >/dev/null 2>&1; then
+    echo >&2
+    echo "Could not open that .p12 with the password given." >&2
+    echo "Either the password is wrong, or the file is not a PKCS#12 bundle." >&2
+    exit 1
+fi
+
+IDENTITY_LINE="$(security find-identity -v -p codesigning "$VERIFY_KEYCHAIN" \
+    | grep 'Developer ID Application' | head -1 || true)"
+
+if [[ -z "$IDENTITY_LINE" ]]; then
+    echo >&2
+    echo "That .p12 opened, but holds no Developer ID Application signing identity." >&2
+    echo >&2
+    echo "The usual cause is exporting the certificate without its private key —" >&2
+    echo "for example a .cer downloaded from developer.apple.com. Export from" >&2
+    echo "Keychain Access -> My Certificates instead, which includes the key." >&2
+    exit 1
+fi
+
+# e.g.  1) ABC123 "Developer ID Application: Jane Doe (ABCDE12345)"
+DETECTED_IDENTITY="$(sed -E 's/.*"(.*)".*/\1/' <<<"$IDENTITY_LINE")"
+DETECTED_TEAM_ID="$(sed -E 's/.*\(([A-Z0-9]+)\)"?.*/\1/' <<<"$DETECTED_IDENTITY")"
+
+echo
+echo "Verified: $DETECTED_IDENTITY"
+echo "Team ID:  $DETECTED_TEAM_ID"
+echo
+
+# --- Set the secrets --------------------------------------------------------
 
 set_secret() {   # set_secret NAME  (value on stdin)
     gh secret set "$1" --repo "$REPO"
     echo "  set $1"
 }
 
-# 1. The certificate itself.
 base64 -i "$P12_PATH" | set_secret BUILD_CERTIFICATE_BASE64
-
-# 2. The password you chose when exporting the .p12.
-read -r -s -p "Password you set when exporting the .p12: " P12_PASSWORD; echo
 printf '%s' "$P12_PASSWORD" | set_secret P12_PASSWORD
 unset P12_PASSWORD
 
-# 3. Throwaway password for the temporary keychain CI creates and discards.
-#    Generated rather than invented — it never needs to be known by a human.
+# Throwaway password for the temporary keychain CI creates and discards.
+# Generated rather than invented — no human ever needs to know it.
 openssl rand -base64 24 | tr -d '\n' | set_secret KEYCHAIN_PASSWORD
 
-# 4/5. Identity and team.
-read -r -p "Signing identity [$DEFAULT_IDENTITY]: " IDENTITY
-printf '%s' "${IDENTITY:-$DEFAULT_IDENTITY}" | set_secret SIGNING_IDENTITY
+# Read off the certificate above; neither is really a secret (both are embedded in
+# every binary you ship) but the workflow reads them as secrets.
+printf '%s' "$DETECTED_IDENTITY" | set_secret SIGNING_IDENTITY
+printf '%s' "$DETECTED_TEAM_ID" | set_secret APPLE_TEAM_ID
 
-read -r -p "Team ID [$DEFAULT_TEAM_ID]: " TEAM_ID
-printf '%s' "${TEAM_ID:-$DEFAULT_TEAM_ID}" | set_secret APPLE_TEAM_ID
-
-# 6/7. Notarization credentials.
 read -r -p "Apple ID email (your Developer Program account): " APPLE_ID
 printf '%s' "$APPLE_ID" | set_secret APPLE_ID
 
