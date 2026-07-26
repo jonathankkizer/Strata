@@ -40,6 +40,10 @@ final class ConnectAccountViewController: NSViewController {
     private enum State { case loading, list, fallback(String) }
     private var state: State = .loading
 
+    /// Shared by the loading and list states so the sheet doesn't resize when the
+    /// accounts land. The fallback state is genuinely terminal and sizes to itself.
+    private static let listBodyHeight: CGFloat = 284
+
     private var allAccounts: [StorageAccountRef] = []
     private var filteredAccounts: [StorageAccountRef] = []
 
@@ -167,8 +171,14 @@ final class ConnectAccountViewController: NSViewController {
 
     private func buildLoadingState() {
         spinner.style = .spinning
-        spinner.controlSize = .regular
         spinner.translatesAutoresizingMaskIntoConstraints = false
+        // A spinning indicator renders at its frame size, and the regular 16pt
+        // control is lost in a body this tall. 32pt is the size Apple uses for a
+        // sheet-filling wait.
+        NSLayoutConstraint.activate([
+            spinner.widthAnchor.constraint(equalToConstant: 32),
+            spinner.heightAnchor.constraint(equalToConstant: 32),
+        ])
 
         loadingLabel.font = .systemFont(ofSize: 12)
         loadingLabel.textColor = .secondaryLabelColor
@@ -176,10 +186,15 @@ final class ConnectAccountViewController: NSViewController {
 
         loadingStack.orientation = .vertical
         loadingStack.alignment = .centerX
-        loadingStack.spacing = 10
+        loadingStack.spacing = 12
         loadingStack.translatesAutoresizingMaskIntoConstraints = false
-        loadingStack.addArrangedSubview(spinner)
-        loadingStack.addArrangedSubview(loadingLabel)
+        // Added to the *center* gravity area, not as plain arranged subviews:
+        // `embed` pins the stack to all four edges of the body, and a vertical
+        // stack packs arranged subviews into the leading (top) area — which left
+        // the spinner clinging to the separator with the rest of the body empty
+        // beneath it. Gravity areas are how AppKit centres along the main axis.
+        loadingStack.addView(spinner, in: .center)
+        loadingStack.addView(loadingLabel, in: .center)
     }
 
     private func buildListState() {
@@ -248,12 +263,15 @@ final class ConnectAccountViewController: NSViewController {
         case .loading:
             spinner.startAnimation(nil)
             manualField.isHidden = true
-            embed(loadingStack, in: bodyContainer, height: 200)
+            // Deliberately the same height as the list: the sheet is already on
+            // screen while this resolves, and the common path resizing itself the
+            // moment the accounts arrive reads as a glitch.
+            embed(loadingStack, in: bodyContainer, height: Self.listBodyHeight)
 
         case .list:
             spinner.stopAnimation(nil)
             manualField.isHidden = false
-            embed(listStack, in: bodyContainer, height: 284)
+            embed(listStack, in: bodyContainer, height: Self.listBodyHeight)
 
         case .fallback(let message):
             spinner.stopAnimation(nil)

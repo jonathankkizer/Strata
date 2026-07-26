@@ -32,10 +32,19 @@ final class CircularProgressView: NSView {
     }
 }
 
-/// Toolbar button for the transfer queue: a tray icon when idle, an aggregate
-/// progress ring while transfers run. Clicking opens the transfers popover.
+/// Toolbar button for the transfer queue: a glyph when idle, an aggregate progress
+/// ring while transfers run. Clicking opens the transfers popover.
 @MainActor
 final class TransfersToolbarButton: NSButton {
+
+    /// The queue carries uploads *and* downloads, so the glyph has to read as
+    /// two-way movement — Apple's own semantic for that is `arrow.up.arrow.down`
+    /// (System Settings' Transfer or Reset, network throughput). An up-only tray
+    /// would both under-describe the queue and echo Upload's `arrow.up.doc` two
+    /// items away in the same toolbar. Deliberately not a `.circle` variant: the
+    /// active state swaps in a progress ring, and a circled glyph would read as a
+    /// second, static ring.
+    private static let idleSymbolName = "arrow.up.arrow.down"
 
     private let ring = CircularProgressView()
 
@@ -44,7 +53,7 @@ final class TransfersToolbarButton: NSButton {
         bezelStyle = .toolbar
         setButtonType(.momentaryPushIn)
         imagePosition = .imageOnly
-        image = NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Transfers")
+        image = NSImage(systemSymbolName: Self.idleSymbolName, accessibilityDescription: "Transfers")
 
         ring.translatesAutoresizingMaskIntoConstraints = false
         ring.isHidden = true
@@ -67,7 +76,7 @@ final class TransfersToolbarButton: NSButton {
             ring.progress = fraction
             setAccessibilityValue("\(Int(fraction * 100))% complete")
         } else {
-            image = NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Transfers")
+            image = NSImage(systemSymbolName: Self.idleSymbolName, accessibilityDescription: "Transfers")
             setAccessibilityValue(nil)
         }
     }
