@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 
 /// Hosts the container sidebar, object list, and inspector, and coordinates between
 /// them. Owns the connected provider and the Connect / Refresh / Upload / Inspector
@@ -24,6 +25,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     private var provider: (any StorageProvider)?
     private var currentContainerName: String?
     private var refreshedCompletions = Set<UUID>()
+    private let quickLook = QuickLookController()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -49,6 +51,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         inspectorItem.isCollapsed = !StrataDefaults.inspectorVisible
         addSplitViewItem(inspectorItem)
 
+        // Persist the sidebar and inspector widths across launches. Shared by every
+        // browser window, which is what Finder does too.
+        splitView.autosaveName = "StrataBrowserSplit"
+
         sidebar.onSelectContainer = { [weak self] container in
             guard let self, let provider = self.provider else { return }
             self.currentContainerName = container.name
@@ -59,15 +65,30 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         content.onSelectionChange = { [weak self] object in
             guard let self else { return }
             self.inspector.present(object: object, provider: self.provider, containerName: self.currentContainerName)
+            // Finder keeps the open Quick Look panel following the selection.
+            self.refreshQuickLookForSelection()
         }
+
+        quickLook.sourceFrameProvider = { [weak self] in self?.content.selectedRowScreenRect }
+        quickLook.keyForwarder = { [weak self] event in self?.content.forwardKeyDown(event) }
 
         content.onDropFiles = { [weak self] urls in
             guard let self, self.provider != nil, let location = self.content.location else { return }
             self.startUpload(sources: urls, to: location)
         }
 
+        // Finder titles a window with the folder you're looking at; track it so the
+        // Window menu lists distinguishable entries.
+        content.onLocationChange = { [weak self] location in
+            self?.updateWindowTitle(for: location)
+        }
+
         browseModeControl.target = self
         browseModeControl.action = #selector(switchBrowseMode(_:))
+        browseModeControl.setAccessibilityLabel("Browse layout")
+        browseModeControl.setToolTip("View as List", forSegment: BrowseMode.list.rawValue)
+        browseModeControl.setToolTip("View as Columns", forSegment: BrowseMode.columns.rawValue)
+        inspector.view.setAccessibilityLabel("Inspector")
         // Restore the last-used browse layout (List/Columns) from the previous launch.
         setBrowseMode(BrowseMode(rawValue: StrataDefaults.browseMode) ?? .list)
 
@@ -178,6 +199,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             return true
         case #selector(uploadFiles(_:)):
             return provider != nil && content.location != nil
+        case #selector(downloadSelection(_:)), #selector(downloadSelectionTo(_:)):
+            return provider != nil && !content.downloadableSelection.isEmpty
+        case #selector(toggleQuickLook(_:)):
+            if let menuItem = item as? NSMenuItem {
+                menuItem.title = quickLook.isPreviewing ? "Close Quick Look" : "Quick Look"
+            }
+            // Closing only needs the panel to be open; opening needs a blob selected.
+            return quickLook.isPreviewing || (provider != nil && !content.downloadableSelection.isEmpty)
         case #selector(toggleObjectInspector(_:)):
             if let menuItem = item as? NSMenuItem {
                 let collapsed = (splitViewItems.last?.isCollapsed ?? true)
@@ -248,6 +277,162 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         }
     }
 
+    // MARK: - Download
+
+    /// Download the selection straight to the download folder — Safari's
+    /// "Download Linked File". Honours the "Ask for each download" preference.
+    @objc func downloadSelection(_ sender: Any?) {
+        startDownload(askWhereToSave: StrataDefaults.askWhereToSaveDownloads)
+    }
+
+    /// Always ask where to put it — Safari's "Download Linked File As…".
+    @objc func downloadSelectionTo(_ sender: Any?) {
+        startDownload(askWhereToSave: true)
+    }
+
+    private func startDownload(askWhereToSave: Bool) {
+        let objects = content.downloadableSelection
+        guard let provider, let containerName = content.selectedContainerName, !objects.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        let container = StorageContainer(name: containerName)
+
+        guard askWhereToSave else {
+            enqueueDownloads(objects, in: container, provider: provider, into: StrataDefaults.downloadDirectory)
+            return
+        }
+        // One blob gets a save panel so the name can be edited; several get a folder
+        // chooser, since a save panel can only name one file.
+        if objects.count == 1 {
+            presentSavePanel(for: objects[0], in: container, provider: provider)
+        } else {
+            presentFolderPanel(for: objects, in: container, provider: provider)
+        }
+    }
+
+    private func presentSavePanel(for object: StorageObject, in container: StorageContainer, provider: any StorageProvider) {
+        guard let window = view.window else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = Self.localFileName(for: object)
+        panel.directoryURL = StrataDefaults.downloadDirectory
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.message = "Download from \(container.name)"
+        // NSSavePanel handles the overwrite confirmation itself.
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            TransferQueue.shared.enqueueDownload(object: object, container: container, to: url, provider: provider)
+        }
+    }
+
+    private func presentFolderPanel(for objects: [StorageObject], in container: StorageContainer, provider: any StorageProvider) {
+        guard let window = view.window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Download"
+        panel.message = "Choose where to download \(objects.count) items"
+        panel.directoryURL = StrataDefaults.downloadDirectory
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let directory = panel.url else { return }
+            self?.enqueueDownloads(objects, in: container, provider: provider, into: directory)
+        }
+    }
+
+    /// Queues one download per blob, resolving name collisions Finder-style. Names
+    /// already claimed earlier in this batch count as taken — the earlier files are
+    /// still in flight, so they aren't on disk to be found by `fileExists` yet.
+    private func enqueueDownloads(
+        _ objects: [StorageObject],
+        in container: StorageContainer,
+        provider: any StorageProvider,
+        into directory: URL
+    ) {
+        let manager = FileManager.default
+        var reserved = Set<String>()
+        for object in objects {
+            let url = DownloadPlanning.uniqueURL(
+                fileName: Self.localFileName(for: object),
+                in: directory,
+                exists: { reserved.contains($0.path) || manager.fileExists(atPath: $0.path) }
+            )
+            reserved.insert(url.path)
+            TransferQueue.shared.enqueueDownload(object: object, container: container, to: url, provider: provider)
+        }
+    }
+
+    private static func localFileName(for object: StorageObject) -> String {
+        DownloadPlanning.fileName(
+            forKey: object.key,
+            preferredExtension: BlobIcon.utType(for: object).preferredFilenameExtension
+        )
+    }
+
+    // MARK: - Quick Look
+
+    /// Space (or ⌘Y): preview the selection, or dismiss the panel if it is already
+    /// up — the Finder's toggle.
+    @objc func toggleQuickLook(_ sender: Any?) {
+        if quickLook.isPreviewing {
+            quickLook.close()
+            return
+        }
+        guard let object = content.downloadableSelection.first,
+              let provider,
+              let containerName = content.selectedContainerName else {
+            NSSound.beep()
+            return
+        }
+        quickLook.preview(
+            object: object,
+            container: StorageContainer(name: containerName),
+            provider: provider,
+            account: accountName ?? provider.displayName,
+            openingPanel: true
+        )
+    }
+
+    /// Swap the open panel's content as the selection moves. Does nothing when the
+    /// panel is closed, so ordinary browsing never triggers a fetch.
+    private func refreshQuickLookForSelection() {
+        guard quickLook.isPreviewing else { return }
+        guard let object = content.downloadableSelection.first,
+              let provider,
+              let containerName = content.selectedContainerName else {
+            quickLook.clear()
+            return
+        }
+        quickLook.preview(
+            object: object,
+            container: StorageContainer(name: containerName),
+            provider: provider,
+            account: accountName ?? provider.displayName,
+            openingPanel: false
+        )
+    }
+
+    // MARK: - Window title
+
+    /// The connected account, used as the window subtitle.
+    private var accountName: String?
+
+    /// Titles the window with the folder in view and subtitles it with the account
+    /// and full path — so several open windows are told apart in the Window menu.
+    private func updateWindowTitle(for location: BrowserLocation?) {
+        guard let window = view.window else { return }
+        guard let location else {
+            window.title = accountName ?? "Strata"
+            window.subtitle = accountName == nil ? "" : ProviderKind.azureBlob.rawValue
+            return
+        }
+        window.title = location.segments.last ?? location.container
+        let path = ([location.container] + location.segments).joined(separator: "/")
+        window.subtitle = accountName.map { "\($0) — \(path)" } ?? path
+    }
+
     @objc func navigateToEnclosingFolder(_ sender: Any?) {
         content.navigateUp()
     }
@@ -295,8 +480,8 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         content.location = nil
         sidebar.setContainers([])
         content.showMessage("Loading containers from \(account)…")
-        view.window?.title = account
-        view.window?.subtitle = "Azure Blob Storage"
+        accountName = account
+        updateWindowTitle(for: nil)
 
         Task { @MainActor in
             do {
@@ -315,5 +500,27 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 self.content.showMessage("Couldn’t connect to “\(account).”\n\n\(error.localizedDescription)")
             }
         }
+    }
+}
+
+// MARK: - QLPreviewPanelController
+
+/// The shared Quick Look panel finds its controller by walking the responder chain,
+/// which is why these live on the split view controller rather than on
+/// `QuickLookController` — the panel would never find that object.
+extension BrowserSplitViewController {
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        true
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = quickLook
+        panel.delegate = quickLook
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
     }
 }

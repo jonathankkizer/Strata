@@ -61,7 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Private
 
     private func openBrowserWindow(sender: Any?, asTab: Bool = false) {
-        let controller = BrowserWindowController()
+        // The first open window owns the saved frame; the rest cascade off it.
+        let controller = BrowserWindowController(isPrimary: browserWindowControllers.isEmpty)
         browserWindowControllers.append(controller)
         controller.onWindowClose = { [weak self, weak controller] in
             guard let self, let controller else { return }

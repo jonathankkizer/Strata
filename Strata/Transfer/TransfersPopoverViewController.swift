@@ -140,6 +140,9 @@ extension TransfersPopoverViewController: NSTableViewDataSource, NSTableViewDele
         rowView.onAction = {
             if item.isActive {
                 TransferQueue.shared.cancel(item)
+            } else if item.canRevealInFinder {
+                // Safari's downloads list: the finished-row button reveals the file.
+                NSWorkspace.shared.activateFileViewerSelecting([item.localURL])
             } else if item.isRetryable {
                 TransferQueue.shared.retry(item)
             }

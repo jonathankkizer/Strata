@@ -15,9 +15,12 @@ it** (Event Grid `data.api` prediction).
 **Azure Blob Storage works end to end.** Connect by picking a storage account from
 a list (Azure Resource Manager), browse in a sortable List view or a Finder-style
 Columns (Miller) view with a bottom path bar and an object inspector/preview, and
-upload (File ▸ Upload… or drag-and-drop, including folders) as streaming, queued
-transfers — each showing the Event Grid `data.api` it will emit. Full keyboard
-navigation, and a unit-test suite for the prediction/parsing/sort logic.
+move bytes both ways as streaming, queued transfers: upload (File ▸ Upload… or
+drag-and-drop, including folders) — each showing the Event Grid `data.api` it will
+emit — and download (⌘D, double-click, or by dragging a blob out to the Finder,
+where it arrives as a file promise and fetches on drop). Space Quick Looks the real
+contents of a blob. Full keyboard navigation, and a unit-test suite for the
+prediction/parsing/sort/naming logic.
 
 **AWS S3 is still stubbed** — the biggest functional gap. See
 [`ROADMAP.md`](ROADMAP.md) for the near-term backlog and known gaps.
