@@ -64,6 +64,11 @@ final class BrowserContentViewController: NSViewController {
         mode == .list ? list.location?.container : columns.selectedContainerName
     }
 
+    /// A single selected folder, if there is one — what "Add to Sidebar" saves.
+    var selectedFolder: StorageObject? {
+        mode == .list ? list.selectedFolder : columns.selectedFolder
+    }
+
     /// The selected row in screen coordinates, for Quick Look's zoom animation.
     var selectedRowScreenRect: NSRect? {
         mode == .list ? list.selectedRowScreenRect : columns.selectedRowScreenRect

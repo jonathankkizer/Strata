@@ -92,6 +92,15 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         quickLook.sourceFrameProvider = { [weak self] in self?.content.selectedRowScreenRect }
         quickLook.keyForwarder = { [weak self] event in self?.content.forwardKeyDown(event) }
 
+        sidebar.onSelectFavorite = { [weak self] favorite in
+            self?.goToFavorite(favorite)
+        }
+        sidebar.onDropFiles = { [weak self] urls, favorite in
+            // Dropping files on a saved place uploads them there, wherever the
+            // browser happens to be pointed.
+            self?.startUpload(sources: urls, to: favorite.location)
+        }
+
         content.onDropFiles = { [weak self] urls in
             guard let self, self.provider != nil, let location = self.content.location else { return }
             self.startUpload(sources: urls, to: location)
@@ -275,6 +284,11 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             return provider != nil
         case #selector(paste(_:)):
             return provider != nil && content.location != nil && !Self.fileURLsOnPasteboard().isEmpty
+        case #selector(addToSidebar(_:)):
+            guard let account = accountName ?? provider?.displayName,
+                  let location = favoritableLocation() else { return false }
+            // Disabled rather than silently making a second copy of the same place.
+            return !FavoritesStore.shared.contains(account: account, location: location)
         default:
             return true
         }
@@ -550,8 +564,64 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
     private func navigate(toTyped location: BrowserLocation) {
         currentContainerName = location.container
+        // Route through the pending-restore hook so selecting the container lands on
+        // the requested folder directly, instead of loading its root and then the
+        // folder — two listings for one jump.
+        pendingRestoreLocation = location
         sidebar.select(StorageContainer(name: location.container))
-        content.location = location
+        if pendingRestoreLocation != nil {
+            // The container isn't in the sidebar (not loaded, or gone); go anyway.
+            pendingRestoreLocation = nil
+            content.location = location
+        }
+    }
+
+    // MARK: - Favorites
+
+    /// ⌃⌘T — save the selected folder, or the folder in view when nothing is selected.
+    /// Finder's command, shortcut, and fallback behaviour.
+    @objc func addToSidebar(_ sender: Any?) {
+        guard let account = accountName ?? provider?.displayName,
+              let location = favoritableLocation() else {
+            NSSound.beep()
+            return
+        }
+        if !FavoritesStore.shared.add(Favorite(account: account, location: location)) {
+            NSSound.beep()   // already saved
+        }
+    }
+
+    /// The place ⌃⌘T would save: a selected folder wins over the folder in view.
+    private func favoritableLocation() -> BrowserLocation? {
+        if let folder = content.selectedFolder, let container = content.selectedContainerName {
+            return BrowserLocation(container: container, prefix: folder.key)
+        }
+        return content.location
+    }
+
+    /// Go-menu entry point: the item carries the favorite's id, since the list can
+    /// change between the menu being built and the item being chosen.
+    @objc func goToFavoriteMenuItem(_ sender: Any?) {
+        guard let id = (sender as? NSMenuItem)?.representedObject as? UUID,
+              let favorite = FavoritesStore.shared.favorite(withID: id) else {
+            NSSound.beep()
+            return
+        }
+        goToFavorite(favorite)
+    }
+
+    /// Jump to a saved place, reconnecting first when it belongs to another account.
+    func goToFavorite(_ favorite: Favorite) {
+        guard favorite.account == (accountName ?? provider?.displayName), provider != nil else {
+            pendingRestoreLocation = favorite.location
+            connect(account: favorite.account)
+            return
+        }
+        // Deliberately not calling `sidebar.select`: the favorite row stays selected,
+        // the way Finder leaves a sidebar favorite highlighted rather than bouncing
+        // the selection down to the volume it lives on.
+        currentContainerName = favorite.container
+        content.location = favorite.location
     }
 
     @objc func navigateToEnclosingFolder(_ sender: Any?) {
@@ -602,6 +672,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         sidebar.setContainers([])
         content.showMessage("Loading containers from \(account)…")
         accountName = account
+        sidebar.currentAccount = account
         updateWindowTitle(for: nil)
         // Locations from a previous account are meaningless in this one.
         history.reset()

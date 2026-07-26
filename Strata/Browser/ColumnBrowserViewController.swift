@@ -32,6 +32,8 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     var objectURL: ((StorageObject) -> URL?)?
     /// Builds the drag-out file promise for an object (provider-supplied).
     var makePromise: ((StorageObject) -> BlobFilePromiseProvider?)?
+    /// Builds the sidebar drag payload for a folder (provider-supplied).
+    var makeLocationDrag: ((StorageObject) -> NSPasteboardItem?)?
 
     /// Make this column's table the first responder (used by ←/→ navigation).
     func focus() {
@@ -97,9 +99,9 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.onArrowLeft = { [weak self] in self?.onExit?() }
         tableView.onSpace = { [weak self] in self?.onSpace?() }
 
-        // Drag blobs out to Finder as file promises, same as the list surface.
+        // Blobs drag out to Finder; folders drag to the sidebar. Same as the list.
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
-        tableView.setDraggingSourceOperationMask([], forLocal: true)
+        tableView.setDraggingSourceOperationMask(.copy, forLocal: true)
         tableView.setAccessibilityLabel("Objects")
 
         let menu = NSMenu()
@@ -115,9 +117,13 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         copyPath.target = self
         let copyURL = NSMenuItem(title: "Copy URL", action: #selector(copyURL(_:)), keyEquivalent: "")
         copyURL.target = self
+        let addToSidebar = NSMenuItem(title: "Add to Sidebar", action: #selector(BrowserSplitViewController.addToSidebar(_:)), keyEquivalent: "")
+        addToSidebar.target = nil   // routed via the responder chain
         menu.addItem(quickLook)
         menu.addItem(download)
         menu.addItem(downloadTo)
+        menu.addItem(.separator())
+        menu.addItem(addToSidebar)
         menu.addItem(.separator())
         menu.addItem(copyName)
         menu.addItem(copyPath)
@@ -264,10 +270,12 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         return displayName(for: items[row])
     }
 
-    /// Blobs drag out as file promises; folders aren't draggable yet.
+    /// Blobs drag out as file promises; folders carry a location for the sidebar.
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
         guard row < items.count else { return nil }
-        return makePromise?(items[row])
+        let item = items[row]
+        if item.isPrefix { return makeLocationDrag?(item) }
+        return makePromise?(item)
     }
 
     // MARK: - NSMenuDelegate
@@ -614,6 +622,13 @@ final class ColumnBrowserViewController: NSViewController {
             guard let self, let provider = self.provider else { return nil }
             return provider.objectURL(forKey: object.key, in: StorageContainer(name: location.container))
         }
+        col.makeLocationDrag = { [weak self] object in
+            guard let self, let provider = self.provider else { return nil }
+            return LocationDrag(
+                account: provider.displayName,
+                location: BrowserLocation(container: location.container, prefix: object.key)
+            ).pasteboardItem()
+        }
         col.makePromise = { [weak self] object in
             guard let self, let provider = self.provider else { return nil }
             return BlobFilePromiseProvider.make(
@@ -646,6 +661,12 @@ final class ColumnBrowserViewController: NSViewController {
     /// The container the selection lives in.
     var selectedContainerName: String? {
         activeColumn?.location.container ?? location?.container
+    }
+
+    /// A selected folder — what "Add to Sidebar" saves.
+    var selectedFolder: StorageObject? {
+        guard let object = activeColumn?.selectedObject, object.isPrefix else { return nil }
+        return object
     }
 
     /// The selected row in screen coordinates, for Quick Look's zoom animation.

@@ -6,13 +6,13 @@ import AppKit
 @MainActor
 enum MainMenu {
 
-    static func build(target: AppDelegate) -> NSMenu {
+    static func build(target: AppDelegate, favoritesMenuDelegate: any NSMenuDelegate) -> NSMenu {
         let mainMenu = NSMenu()
         mainMenu.addItem(appMenuItem(target: target))
         mainMenu.addItem(fileMenuItem(target: target))
         mainMenu.addItem(editMenuItem())
         mainMenu.addItem(viewMenuItem())
-        mainMenu.addItem(goMenuItem())
+        mainMenu.addItem(goMenuItem(favoritesMenuDelegate: favoritesMenuDelegate))
         mainMenu.addItem(windowMenuItem())
         mainMenu.addItem(helpMenuItem())
         return mainMenu
@@ -65,6 +65,10 @@ enum MainMenu {
             // Targets nil so it routes through the responder chain to the key
             // window's BrowserSplitViewController. Cmd+K mirrors Finder's
             // "Connect to Server".
+            // Finder's command, shortcut, and placement for saving a place.
+            let addToSidebar = menu.addItem(withTitle: "Add to Sidebar", action: #selector(BrowserSplitViewController.addToSidebar(_:)), keyEquivalent: "t")
+            addToSidebar.keyEquivalentModifierMask = [.command, .control]
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Upload…", action: #selector(BrowserSplitViewController.uploadFiles(_:)), keyEquivalent: "u")
             // Safari's pairing: plain Download goes to the download folder, the
             // "To…" variant always asks. ⌘D is free here — there is nothing to
@@ -118,8 +122,10 @@ enum MainMenu {
     /// Finder's Go menu: history, then hierarchy, then jumping somewhere by name.
     /// Enclosing Folder and Connect live here rather than in View and File because
     /// this is where a Mac user looks for them.
-    private static func goMenuItem() -> NSMenuItem {
+    private static func goMenuItem(favoritesMenuDelegate: any NSMenuDelegate) -> NSMenuItem {
         submenu("Go") { menu in
+            // Saved places are appended by the delegate each time the menu opens.
+            menu.delegate = favoritesMenuDelegate
             let back = menu.addItem(withTitle: "Back", action: #selector(BrowserSplitViewController.goBack(_:)), keyEquivalent: "[")
             back.keyEquivalentModifierMask = [.command]
             let forward = menu.addItem(withTitle: "Forward", action: #selector(BrowserSplitViewController.goForward(_:)), keyEquivalent: "]")
