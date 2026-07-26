@@ -19,8 +19,10 @@ move bytes both ways as streaming, queued transfers: upload (File ▸ Upload… 
 drag-and-drop, including folders) — each showing the Event Grid `data.api` it will
 emit — and download (⌘D, double-click, or by dragging a blob out to the Finder,
 where it arrives as a file promise and fetches on drop). Space Quick Looks the real
-contents of a blob. Full keyboard navigation, and a unit-test suite for the
-prediction/parsing/sort/naming logic.
+contents of a blob. Copy a blob and paste it into the Finder to download it; paste
+files in to upload them. Full keyboard navigation — including Back/Forward and Go to
+Folder — and it reopens the account and folder you were last in. A unit-test suite
+covers the prediction/parsing/sort/naming/history logic.
 
 **AWS S3 is still stubbed** — the biggest functional gap. See
 [`ROADMAP.md`](ROADMAP.md) for the near-term backlog and known gaps.

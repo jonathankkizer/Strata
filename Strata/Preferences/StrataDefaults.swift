@@ -80,6 +80,44 @@ enum StrataDefaults {
         set { UserDefaults.standard.set(newValue, forKey: askWhereToSaveDownloadsKey) }
     }
 
+    private static let reconnectOnLaunchKey = "ReconnectOnLaunch"
+
+    /// Whether to reconnect to the last account when the app opens. On by default —
+    /// an app that forgets where you were every launch is not respecting your time.
+    /// `UserDefaults.bool` defaults to false, so the stored sense is inverted.
+    static var reconnectOnLaunch: Bool {
+        get { !UserDefaults.standard.bool(forKey: reconnectOnLaunchKey) }
+        set { UserDefaults.standard.set(!newValue, forKey: reconnectOnLaunchKey) }
+    }
+
+    private static let lastAccountKey = "LastAccount"
+
+    /// The last storage account connected to. Only a name — credentials stay in the
+    /// `az` CLI's keychain, which is the whole point of piggybacking it.
+    static var lastAccount: String? {
+        get { UserDefaults.standard.string(forKey: lastAccountKey) }
+        set { UserDefaults.standard.set(newValue, forKey: lastAccountKey) }
+    }
+
+    private static let lastContainerKey = "LastContainer"
+    private static let lastPrefixKey = "LastPrefix"
+
+    /// The last folder browsed, restored into the first window on relaunch.
+    static var lastLocation: BrowserLocation? {
+        get {
+            guard let container = UserDefaults.standard.string(forKey: lastContainerKey),
+                  !container.isEmpty else { return nil }
+            return BrowserLocation(
+                container: container,
+                prefix: UserDefaults.standard.string(forKey: lastPrefixKey) ?? ""
+            )
+        }
+        set {
+            UserDefaults.standard.set(newValue?.container, forKey: lastContainerKey)
+            UserDefaults.standard.set(newValue?.prefix, forKey: lastPrefixKey)
+        }
+    }
+
     private static let preferencesPaneKey = "PreferencesPane"
 
     /// The last-selected Preferences pane identifier, restored when the window

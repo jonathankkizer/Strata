@@ -58,17 +58,27 @@ final class InspectorViewController: NSViewController {
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
         ])
 
-        present(object: nil, provider: nil, containerName: nil)
+        present(objects: [], provider: nil, containerName: nil)
     }
 
     // MARK: - Presentation
 
-    func present(object: StorageObject?, provider: (any StorageProvider)?, containerName: String?) {
+    /// Shows the selection: an empty state for none, full detail for one, and a
+    /// Finder-style summary for several. Only a single selection is worth a HEAD —
+    /// enriching N objects would mean N round trips for information the summary
+    /// doesn't show.
+    func present(objects: [StorageObject], provider: (any StorageProvider)?, containerName: String?) {
         loadToken += 1
         let token = loadToken
+
+        guard objects.count == 1 else {
+            rebuildForMultiple(objects)
+            return
+        }
+        let object = objects[0]
         rebuild(for: object, metadata: nil)
 
-        guard let object, !object.isPrefix, let provider, let containerName else { return }
+        guard !object.isPrefix, let provider, let containerName else { return }
 
         Task { @MainActor in
             let container = StorageContainer(name: containerName)
@@ -119,6 +129,103 @@ final class InspectorViewController: NSViewController {
         }
 
         stack.addArrangedSubview(eventGridSection(for: object))
+    }
+
+    /// Finder's multiple-selection Get Info: how many, how big, and what mix.
+    private func rebuildForMultiple(_ objects: [StorageObject]) {
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        guard !objects.isEmpty else {
+            stack.alignment = .centerX
+            stack.addArrangedSubview(emptyState())
+            return
+        }
+
+        let folders = objects.filter(\.isPrefix)
+        let blobs = objects.filter { !$0.isPrefix }
+        // Folder sizes are unknown without a recursive walk, so the total covers the
+        // blobs and the caption says so rather than quietly under-reporting.
+        let totalBytes = blobs.reduce(Int64(0)) { $0 + $1.size }
+
+        stack.alignment = .width
+        stack.addArrangedSubview(multipleHeaderView(count: objects.count, totalBytes: totalBytes, blobCount: blobs.count))
+
+        var rows: [(String, String)] = [("Items", "\(objects.count)")]
+        if !folders.isEmpty {
+            rows.append(("Folders", "\(folders.count)"))
+        }
+        if !blobs.isEmpty {
+            rows.append(("Blobs", "\(blobs.count)"))
+            rows.append(("Total Size", byteFormatter.string(fromByteCount: totalBytes)))
+            if let largest = blobs.max(by: { $0.size < $1.size }) {
+                rows.append(("Largest", "\(lastComponent(of: largest.key)) — \(byteFormatter.string(fromByteCount: largest.size))"))
+            }
+        }
+        stack.addArrangedSubview(section("Selection", rows: rows))
+
+        // The differentiator still applies in bulk: re-uploading this selection emits
+        // a mix of events, and which ones is exactly what the user wants to know.
+        if !blobs.isEmpty {
+            stack.addArrangedSubview(multipleEventGridSection(for: blobs))
+        }
+    }
+
+    private func multipleHeaderView(count: Int, totalBytes: Int64, blobCount: Int) -> NSView {
+        let icon = NSImageView()
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 44, weight: .thin)
+        icon.contentTintColor = .secondaryLabelColor
+
+        let name = NSTextField(labelWithString: "\(count) items selected")
+        name.font = .systemFont(ofSize: 13, weight: .semibold)
+        name.alignment = .center
+
+        let subtitle = NSTextField(labelWithString: blobCount == 0
+            ? "Folders"
+            : byteFormatter.string(fromByteCount: totalBytes))
+        subtitle.font = .systemFont(ofSize: 11)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.alignment = .center
+
+        let container = NSStackView(views: [icon, name, subtitle])
+        container.orientation = .vertical
+        container.alignment = .centerX
+        container.spacing = 6
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let wrapper = NSView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(container)
+        NSLayoutConstraint.activate([
+            container.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 8),
+            container.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -8),
+            container.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
+            container.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor),
+            container.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
+        ])
+        return wrapper
+    }
+
+    /// Counts how many of the selected blobs would emit each `data.api` on re-upload.
+    private func multipleEventGridSection(for blobs: [StorageObject]) -> NSView {
+        var counts: [BlobWriteAPI: Int] = [:]
+        for blob in blobs {
+            let api = UploadPlan(byteCount: blob.size, endpoint: .blob).predictedCommitAPI
+            counts[api, default: 0] += 1
+        }
+
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 6
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addArrangedSubview(sectionHeader("Event Grid"))
+
+        for (api, count) in counts.sorted(by: { $0.value > $1.value }) {
+            container.addArrangedSubview(row(api.rawValue, "\(count) of \(blobs.count) on re-upload"))
+        }
+        return container
     }
 
     // MARK: - Sections

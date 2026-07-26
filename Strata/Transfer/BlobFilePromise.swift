@@ -19,6 +19,10 @@ final class BlobFilePromiseProvider: NSFilePromiseProvider, @unchecked Sendable 
         let container: StorageContainer
         let provider: any StorageProvider
         let fileName: String
+        /// What a plain-text target should receive: the `container/key` path.
+        let pathText: String
+        /// The shareable blob URL, for targets that want a link.
+        let url: URL?
     }
 
     let payload: Payload
@@ -33,14 +37,20 @@ final class BlobFilePromiseProvider: NSFilePromiseProvider, @unchecked Sendable 
     /// Builds the promise for one blob, or nil for a folder — recursive prefix
     /// download is a separate feature, and promising a directory we cannot yet
     /// produce would be worse than not offering the drag at all.
+    /// - Parameter pathText: overrides the plain-text representation. Copy uses this
+    ///   to put every selected path on the first item, so single-string paste targets
+    ///   receive the whole selection rather than just one line.
     @MainActor
     static func make(
         for object: StorageObject,
         in container: StorageContainer,
-        provider: any StorageProvider
+        provider: any StorageProvider,
+        pathText: String? = nil
     ) -> BlobFilePromiseProvider? {
         guard !object.isPrefix else { return nil }
         let type = BlobIcon.utType(for: object)
+        var key = object.key
+        if key.hasSuffix("/") { key.removeLast() }
         let payload = Payload(
             object: object,
             container: container,
@@ -48,13 +58,52 @@ final class BlobFilePromiseProvider: NSFilePromiseProvider, @unchecked Sendable 
             fileName: DownloadPlanning.fileName(
                 forKey: object.key,
                 preferredExtension: type.preferredFilenameExtension
-            )
+            ),
+            pathText: pathText ?? "\(container.name)/\(key)",
+            url: provider.objectURL(forKey: object.key, in: container)
         )
         return BlobFilePromiseProvider(
             payload: payload,
             fileType: type.identifier,
             delegate: BlobFilePromiseDelegate.shared
         )
+    }
+
+    // MARK: - NSPasteboardWriting
+
+    // Carrying text and a URL alongside the promise is what lets one Copy serve every
+    // kind of target: paste into the Finder and the blob downloads, paste into a
+    // browser and you get its URL, paste into an editor and you get its path.
+
+    override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        var types = super.writableTypes(for: pasteboard)
+        types.append(.string)
+        if payload.url != nil { types.append(.URL) }
+        return types
+    }
+
+    override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        switch type {
+        case .string:
+            return payload.pathText
+        case .URL:
+            return payload.url?.absoluteString
+        default:
+            return super.pasteboardPropertyList(forType: type)
+        }
+    }
+
+    override func writingOptions(
+        forType type: NSPasteboard.PasteboardType,
+        pasteboard: NSPasteboard
+    ) -> NSPasteboard.WritingOptions {
+        switch type {
+        case .string, .URL:
+            // Available immediately; only the file itself is promised.
+            return []
+        default:
+            return super.writingOptions(forType: type, pasteboard: pasteboard)
+        }
     }
 }
 

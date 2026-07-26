@@ -22,10 +22,23 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         action: nil
     )
 
+    /// Whether this window restores the last browsed folder on launch. Only the first
+    /// window does; ⌘N should open a fresh view of the account, not a second copy of
+    /// wherever you were.
+    var restoresLastLocation = false
+
     private var provider: (any StorageProvider)?
     private var currentContainerName: String?
     private var refreshedCompletions = Set<UUID>()
     private let quickLook = QuickLookController()
+
+    private var history = BrowserHistory()
+    /// Set while Back/Forward is driving the location, so the resulting change isn't
+    /// recorded as a new visit and doesn't truncate the forward stack.
+    private var isNavigatingHistory = false
+    /// A location to land on once the account's containers have loaded.
+    private var pendingRestoreLocation: BrowserLocation?
+    private var hasAttemptedReconnect = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -59,12 +72,19 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             guard let self, let provider = self.provider else { return }
             self.currentContainerName = container.name
             self.content.provider = provider
-            self.content.location = BrowserLocation(container: container.name, prefix: "")
+            // Restoring the last folder happens here rather than after the container
+            // loads, so the listing is fetched once instead of twice.
+            if let restore = self.pendingRestoreLocation, restore.container == container.name {
+                self.pendingRestoreLocation = nil
+                self.content.location = restore
+            } else {
+                self.content.location = BrowserLocation(container: container.name, prefix: "")
+            }
         }
 
-        content.onSelectionChange = { [weak self] object in
+        content.onSelectionChange = { [weak self] objects in
             guard let self else { return }
-            self.inspector.present(object: object, provider: self.provider, containerName: self.currentContainerName)
+            self.inspector.present(objects: objects, provider: self.provider, containerName: self.currentContainerName)
             // Finder keeps the open Quick Look panel following the selection.
             self.refreshQuickLookForSelection()
         }
@@ -77,10 +97,19 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             self.startUpload(sources: urls, to: location)
         }
 
-        // Finder titles a window with the folder you're looking at; track it so the
-        // Window menu lists distinguishable entries.
         content.onLocationChange = { [weak self] location in
-            self?.updateWindowTitle(for: location)
+            guard let self else { return }
+            // Finder titles a window with the folder you're looking at; track it so
+            // the Window menu lists distinguishable entries.
+            self.updateWindowTitle(for: location)
+
+            guard let location else { return }
+            // Back/Forward set the location themselves; recording that would both
+            // duplicate the entry and wipe the forward stack.
+            if !self.isNavigatingHistory {
+                self.history.record(location)
+            }
+            StrataDefaults.lastLocation = location
         }
 
         browseModeControl.target = self
@@ -95,8 +124,30 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         NotificationCenter.default.addObserver(self, selector: #selector(transferQueueChanged), name: .transferQueueDidChange, object: nil)
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // Deferred to here rather than viewDidLoad because connecting updates the
+        // window title, and there is no window yet at load time.
+        guard !hasAttemptedReconnect else { return }
+        hasAttemptedReconnect = true
+        reconnectToLastAccount()
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Reconnect
+
+    /// Reopens the last account on launch. Credentials are the `az` CLI's problem, so
+    /// this is just a name and a fresh token request — if the CLI session has expired
+    /// the browse surface reports it the same way it would after any other failure.
+    private func reconnectToLastAccount() {
+        guard StrataDefaults.reconnectOnLaunch, let account = StrataDefaults.lastAccount else { return }
+        if restoresLastLocation, let location = StrataDefaults.lastLocation {
+            pendingRestoreLocation = location
+        }
+        connect(account: account)
     }
 
     // MARK: - Actions
@@ -215,6 +266,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             return true
         case #selector(connectAzureStorageAccount(_:)):
             return true
+        case #selector(goBack(_:)):
+            return history.canGoBack
+        case #selector(goForward(_:)):
+            return history.canGoForward
+        case #selector(goToFolder(_:)):
+            return provider != nil
+        case #selector(paste(_:)):
+            return provider != nil && content.location != nil && !Self.fileURLsOnPasteboard().isEmpty
         default:
             return true
         }
@@ -275,6 +334,25 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 provider: provider
             )
         }
+    }
+
+    // MARK: - Paste
+
+    /// ⌘V with files on the pasteboard uploads them here — the mirror of dragging
+    /// them in, and of Finder's own paste. Routed through exactly the same planning
+    /// and queueing as a drop.
+    @objc func paste(_ sender: Any?) {
+        guard let location = content.location, provider != nil else { NSSound.beep(); return }
+        let urls = Self.fileURLsOnPasteboard()
+        guard !urls.isEmpty else { NSSound.beep(); return }
+        startUpload(sources: urls, to: location)
+    }
+
+    private static func fileURLsOnPasteboard() -> [URL] {
+        NSPasteboard.general.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] ?? []
     }
 
     // MARK: - Download
@@ -433,6 +511,48 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         window.subtitle = accountName.map { "\($0) — \(path)" } ?? path
     }
 
+    // MARK: - Go
+
+    /// ⌘[ — Safari/Finder Back.
+    @objc func goBack(_ sender: Any?) {
+        guard let location = history.goBack() else { NSSound.beep(); return }
+        navigate(toHistory: location)
+    }
+
+    /// ⌘] — Forward.
+    @objc func goForward(_ sender: Any?) {
+        guard let location = history.goForward() else { NSSound.beep(); return }
+        navigate(toHistory: location)
+    }
+
+    private func navigate(toHistory location: BrowserLocation) {
+        isNavigatingHistory = true
+        defer { isNavigatingHistory = false }
+        // Moving between containers has to move the sidebar selection too, or the
+        // sidebar would claim you are somewhere you are not.
+        if location.container != currentContainerName {
+            currentContainerName = location.container
+            sidebar.select(StorageContainer(name: location.container))
+        }
+        content.location = location
+    }
+
+    /// ⇧⌘G — type a path to jump straight there.
+    @objc func goToFolder(_ sender: Any?) {
+        guard provider != nil else { NSSound.beep(); return }
+        let sheet = GoToFolderViewController(
+            initialPath: content.location?.path ?? "",
+            onGo: { [weak self] location in self?.navigate(toTyped: location) }
+        )
+        presentAsSheet(sheet)
+    }
+
+    private func navigate(toTyped location: BrowserLocation) {
+        currentContainerName = location.container
+        sidebar.select(StorageContainer(name: location.container))
+        content.location = location
+    }
+
     @objc func navigateToEnclosingFolder(_ sender: Any?) {
         content.navigateUp()
     }
@@ -482,12 +602,23 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         content.showMessage("Loading containers from \(account)…")
         accountName = account
         updateWindowTitle(for: nil)
+        // Locations from a previous account are meaningless in this one.
+        history.reset()
+        StrataDefaults.lastAccount = account
 
         Task { @MainActor in
             do {
                 let containers = try await provider.listContainers()
                 self.sidebar.setContainers(containers)
-                if let first = containers.first {
+                // Prefer the container the user was last in; the saved container may
+                // no longer exist, in which case fall back to the first.
+                let restoreTarget = self.pendingRestoreLocation.flatMap { location in
+                    containers.first { $0.name == location.container }
+                }
+                if let restoreTarget {
+                    self.sidebar.select(restoreTarget)
+                } else if let first = containers.first {
+                    self.pendingRestoreLocation = nil
                     self.sidebar.select(first)
                 } else {
                     self.content.showMessage("No containers in “\(account).”")

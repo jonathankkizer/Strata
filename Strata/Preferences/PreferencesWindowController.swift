@@ -120,10 +120,9 @@ private final class GeneralPreferencesViewController: NSViewController {
 
     override func loadView() {
         let root = NSView()
-        let uploads = makeUploadsBox()
-        let downloads = makeDownloadsBox()
+        let boxes = [makeStartupBox(), makeUploadsBox(), makeDownloadsBox()]
 
-        let stack = NSStackView(views: [uploads, downloads])
+        let stack = NSStackView(views: boxes)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 16
@@ -135,12 +134,27 @@ private final class GeneralPreferencesViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
-            uploads.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            downloads.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        ] + boxes.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
         view = root
 
-        preferredContentSize = NSSize(width: 520, height: 330)
+        preferredContentSize = NSSize(width: 520, height: 440)
+    }
+
+    // MARK: - Startup
+
+    private func makeStartupBox() -> NSBox {
+        let checkbox = NSButton(
+            checkboxWithTitle: "Reconnect to the last account on launch",
+            target: self,
+            action: #selector(reconnectOnLaunchChanged(_:))
+        )
+        checkbox.state = StrataDefaults.reconnectOnLaunch ? .on : .off
+
+        let description = explanatoryLabel(
+            "Reopens the account and folder you were last browsing. Credentials are "
+            + "never stored — Strata asks the az CLI for a fresh token each time."
+        )
+        return makeBox(titled: "Startup", content: [checkbox, description])
     }
 
     // MARK: - Uploads
@@ -243,6 +257,10 @@ private final class GeneralPreferencesViewController: NSViewController {
 
     @objc private func askBeforeUploadingChanged(_ sender: NSButton) {
         StrataDefaults.askBeforeUploading = sender.state == .on
+    }
+
+    @objc private func reconnectOnLaunchChanged(_ sender: NSButton) {
+        StrataDefaults.reconnectOnLaunch = sender.state == .on
     }
 
     @objc private func askWhereToSaveChanged(_ sender: NSButton) {

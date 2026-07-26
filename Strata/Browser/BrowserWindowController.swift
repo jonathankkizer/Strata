@@ -51,6 +51,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         self.init(window: window)
 
         window.delegate = self
+        // Only the first window reopens where you left off; ⌘N gives a fresh view of
+        // the account rather than a duplicate of the same folder.
+        splitViewController.restoresLastLocation = isPrimary
         window.contentViewController = splitViewController
         configureToolbar(for: window)
         observeTransferQueue()

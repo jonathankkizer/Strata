@@ -36,7 +36,7 @@ final class BrowserContentViewController: NSViewController {
         }
     }
 
-    var onSelectionChange: ((StorageObject?) -> Void)? {
+    var onSelectionChange: (([StorageObject]) -> Void)? {
         didSet {
             list.onSelectionChange = onSelectionChange
             columns.onSelectionChange = onSelectionChange
