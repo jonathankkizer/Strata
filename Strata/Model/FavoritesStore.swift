@@ -1,0 +1,102 @@
+import Foundation
+
+extension Notification.Name {
+    /// Favorites were added, removed, renamed, or reordered. Every open window's
+    /// sidebar listens, so all of them stay in step.
+    static let favoritesDidChange = Notification.Name("StrataFavoritesDidChange")
+}
+
+/// The user's favorites, in their chosen order, persisted across launches.
+///
+/// `defaults` is injectable so tests exercise the real store against a scratch
+/// suite rather than a stand-in.
+@MainActor
+final class FavoritesStore {
+
+    static let shared = FavoritesStore()
+
+    private static let storageKey = "Favorites"
+
+    private let defaults: UserDefaults
+    private(set) var favorites: [Favorite] = []
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        load()
+    }
+
+    // MARK: - Queries
+
+    var isEmpty: Bool { favorites.isEmpty }
+
+    func favorite(withID id: UUID) -> Favorite? {
+        favorites.first { $0.id == id }
+    }
+
+    /// Whether this exact place is already saved — drives "Add to Sidebar" being
+    /// disabled rather than silently creating a second copy.
+    func contains(account: String, location: BrowserLocation) -> Bool {
+        favorites.contains {
+            $0.account == account && $0.container == location.container && $0.prefix == location.prefix
+        }
+    }
+
+    // MARK: - Mutations
+
+    /// Adds a favorite unless the same place is already saved. Returns whether it
+    /// was added, so callers can beep rather than appear to do nothing.
+    @discardableResult
+    func add(_ favorite: Favorite, at index: Int? = nil) -> Bool {
+        guard !favorites.contains(where: { $0.refersToSamePlace(as: favorite) }) else { return false }
+        let target = index.map { max(0, min($0, favorites.count)) } ?? favorites.count
+        favorites.insert(favorite, at: target)
+        commit()
+        return true
+    }
+
+    func remove(id: UUID) {
+        guard let index = favorites.firstIndex(where: { $0.id == id }) else { return }
+        favorites.remove(at: index)
+        commit()
+    }
+
+    /// Renames a favorite. An empty or whitespace-only name clears the custom name,
+    /// so the favorite falls back to the folder's own name rather than going blank.
+    func rename(id: UUID, to name: String?) {
+        guard let index = favorites.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        favorites[index].customName = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        commit()
+    }
+
+    /// Moves a favorite, where `destination` is an insertion index in the list *as it
+    /// stands before the move* — which is what NSOutlineView's drop callback reports.
+    func move(id: UUID, to destination: Int) {
+        guard let from = favorites.firstIndex(where: { $0.id == id }) else { return }
+        guard destination >= 0, destination <= favorites.count else { return }
+        // Removing the item first shifts everything after it down by one.
+        let adjusted = destination > from ? destination - 1 : destination
+        guard adjusted != from else { return }
+        let moved = favorites.remove(at: from)
+        favorites.insert(moved, at: min(adjusted, favorites.count))
+        commit()
+    }
+
+    // MARK: - Persistence
+
+    private func commit() {
+        persist()
+        NotificationCenter.default.post(name: .favoritesDidChange, object: self)
+    }
+
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(favorites) else { return }
+        defaults.set(data, forKey: Self.storageKey)
+    }
+
+    private func load() {
+        guard let data = defaults.data(forKey: Self.storageKey),
+              let decoded = try? JSONDecoder().decode([Favorite].self, from: data) else { return }
+        favorites = decoded
+    }
+}

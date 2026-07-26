@@ -5,9 +5,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var browserWindowControllers: [BrowserWindowController] = []
     private var preferencesWindowController: PreferencesWindowController?
+    /// Held for the app's lifetime — NSMenu's delegate reference is weak.
+    private let favoritesMenuController = FavoritesMenuController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.mainMenu = MainMenu.build(target: self)
+        NSApp.mainMenu = MainMenu.build(target: self, favoritesMenuDelegate: favoritesMenuController)
         openBrowserWindow(sender: nil)
         NSApp.activate()
     }

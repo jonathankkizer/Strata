@@ -136,10 +136,10 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         // Drag-and-drop upload from Finder.
         tableView.registerForDraggedTypes([.fileURL])
-        // Drag blobs out to Finder (file promises). Copy-only, and only outside the
-        // app — there is no in-app move/reorder to support.
+        // Blobs drag out to Finder as file promises; folders drag to the sidebar to
+        // become favorites. Both are copies.
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
-        tableView.setDraggingSourceOperationMask([], forLocal: true)
+        tableView.setDraggingSourceOperationMask(.copy, forLocal: true)
 
         // Persist column widths, order, and visibility across launches.
         tableView.autosaveName = "StrataObjectList"
@@ -172,6 +172,10 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         menu.addItem(copyNameItem)
         menu.addItem(copyPathItem)
         menu.addItem(copyURLItem)
+        menu.addItem(.separator())
+        let addToSidebarItem = NSMenuItem(title: "Add to Sidebar", action: #selector(BrowserSplitViewController.addToSidebar(_:)), keyEquivalent: "")
+        addToSidebarItem.target = nil   // routed via the responder chain
+        menu.addItem(addToSidebarItem)
         menu.addItem(.separator())
         menu.addItem(SortMenu.makeItem(shortcuts: false))
         menu.addItem(.separator())
@@ -550,12 +554,20 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     // MARK: - Drag out (file promises)
 
     /// Blobs drag out to Finder as file promises — the download happens on drop.
-    /// Folders return nil: recursive prefix download isn't built, and promising a
-    /// directory we can't produce would be worse than not offering the drag.
+    /// Folders carry a location instead, which only Strata's own sidebar accepts:
+    /// recursive prefix download isn't built, so promising the Finder a directory we
+    /// can't produce would be worse than not offering the drag.
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
         guard row < items.count, let location, let provider else { return nil }
+        let item = items[row]
+        guard !item.isPrefix else {
+            return LocationDrag(
+                account: provider.displayName,
+                location: BrowserLocation(container: location.container, prefix: item.key)
+            ).pasteboardItem()
+        }
         return BlobFilePromiseProvider.make(
-            for: items[row],
+            for: item,
             in: StorageContainer(name: location.container),
             provider: provider
         )
@@ -644,6 +656,14 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         selectedObjects().filter { !$0.isPrefix }
     }
 
+    /// A single selected folder — what "Add to Sidebar" saves. Ambiguous with several
+    /// rows selected, so only one counts.
+    var selectedFolder: StorageObject? {
+        let selection = selectedObjects()
+        guard selection.count == 1, let only = selection.first, only.isPrefix else { return nil }
+        return only
+    }
+
     /// The selected row's rect in screen coordinates, so Quick Look can zoom out of
     /// the row the way Finder does. Nil when nothing is selected or off screen.
     var selectedRowScreenRect: NSRect? {
@@ -708,6 +728,14 @@ extension ObjectListViewController: NSMenuDelegate {
         let hasBlobTarget = selectedObjects().contains { !$0.isPrefix }
         menu.items.forEach { item in
             switch item.action {
+            case #selector(BrowserSplitViewController.addToSidebar(_:)):
+                // Only the coordinator knows what is already saved, so ask whichever
+                // responder actually handles the action. This menu manages its own
+                // enabled state, so AppKit won't do it for us.
+                let handler = NSApp.target(
+                    forAction: #selector(BrowserSplitViewController.addToSidebar(_:)), to: nil, from: item
+                ) as? any NSUserInterfaceValidations
+                item.isEnabled = handler?.validateUserInterfaceItem(item) ?? false
             case #selector(copyName(_:)), #selector(copyPath(_:)):
                 item.isEnabled = hasTarget
             case #selector(copyURL(_:)),

@@ -27,6 +27,11 @@ Working today (Azure Blob Storage only):
   (so ⌘V in the Finder downloads the blob) alongside its path and URL, and ⌘V here
   uploads files copied from the Finder.
 - **Go**: Back / Forward (⌘[ / ⌘]), Enclosing Folder (⌘↑), and Go to Folder… (⇧⌘G).
+- **Favorites**: a Finder-style Favorites section above Containers in the sidebar.
+  Add with ⌃⌘T or by dragging a folder onto it, reorder by dragging, rename in
+  place, jump from the Go menu with ⌃⌘1…9 — and drop files onto a saved place to
+  upload there. A favorite carries its account, so it can jump across accounts,
+  reconnecting on the way.
 - **Reconnect on launch** to the last account and folder, with a Settings toggle.
 - **Settings** (grouped, content-sized) and a notarization-ready release workflow.
 
@@ -66,6 +71,12 @@ These are the functional gaps; several Finder shortcuts are blocked on them.
 - Match the predicted `data.api` against the account's **actual Event Grid
   subscriptions** (management API), so the app can say not just *what* event a write
   emits, but whether a subscription is actually listening for it.
+
+### Favorites
+- **Stale favorites are not detected.** Blob storage has no real folders — a "folder"
+  exists only while it holds blobs — so a saved place can quietly stop existing.
+  Validating on launch would mean one request per favorite to prevent a case the
+  empty state already handles, so they are left alone deliberately.
 
 ### Polish & preferences
 - **Drag-and-drop upload in the Columns view** (wired for the List view today;
