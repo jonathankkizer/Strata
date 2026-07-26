@@ -33,13 +33,22 @@ final class PreferencesWindowController: NSWindowController {
         window.isRestorable = false
         self.init(window: window)
 
-        let generalPane = Pane(
-            identifier: "general",
-            label: "General",
-            symbolName: "gearshape",
-            viewController: GeneralPreferencesViewController()
-        )
-        panes[generalPane.identifier] = generalPane
+        for pane in [
+            Pane(
+                identifier: "general",
+                label: "General",
+                symbolName: "gearshape",
+                viewController: GeneralPreferencesViewController()
+            ),
+            Pane(
+                identifier: "updates",
+                label: "Updates",
+                symbolName: "arrow.down.circle",
+                viewController: UpdatesPreferencesViewController()
+            ),
+        ] {
+            panes[pane.identifier] = pane
+        }
 
         let toolbar = NSToolbar(identifier: "StrataPreferencesToolbar")
         toolbar.delegate = self
@@ -108,30 +117,32 @@ extension PreferencesWindowController: NSToolbarDelegate {
     }
 }
 
-// MARK: - General pane
+// MARK: - Shared pane chrome
 
-private final class GeneralPreferencesViewController: NSViewController {
+/// Layout and sizing every pane shares: grouped boxes, captions aligned to their
+/// control's title, and a window that measures its height from the content instead of
+/// guessing it. Subclasses supply `boxes()`.
+private class PreferencePaneViewController: NSViewController {
 
     /// Standard macOS settings-window content width. Height is measured from the
-    /// content rather than guessed, so the window hugs the panes.
-    private static let windowWidth: CGFloat = 520
+    /// content rather than guessed, so the window hugs each pane.
+    static let windowWidth: CGFloat = 520
 
     /// Where a regular NSButton checkbox's *title* starts, measured from the
     /// button's leading edge. Captions line up with the title, not with the box —
     /// the System Settings / Safari convention.
-    private static let captionIndent: CGFloat = 20
-
-    /// Pop-up listing the current download folder plus an "Other…" escape, the same
-    /// shape as Safari's "File download location".
-    private let downloadLocationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    static let captionIndent: CGFloat = 20
 
     /// Wrapping captions can't resolve their own height until something tells them
     /// how wide they are; `viewDidLayout` feeds them their real width.
     private var captions: [NSTextField] = []
 
+    /// Subclass hook: the pane's grouped boxes, top to bottom.
+    func boxes() -> [NSBox] { [] }
+
     override func loadView() {
         let root = NSView()
-        let boxes = [makeStartupBox(), makeUploadsBox(), makeDownloadsBox()]
+        let boxes = boxes()
 
         let stack = NSStackView(views: boxes)
         stack.orientation = .vertical
@@ -180,6 +191,76 @@ private final class GeneralPreferencesViewController: NSViewController {
         preferredContentSize = NSSize(width: Self.windowWidth, height: view.fittingSize.height)
     }
 
+    // MARK: - Building blocks
+
+    /// A control with its explanatory caption beneath it. The caption is indented to
+    /// the control's title and pinned to the trailing edge, so it wraps to the real
+    /// available width instead of a hardcoded one that left a lopsided right margin.
+    func setting(_ control: NSView, caption text: String) -> NSView {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        captions.append(label)
+
+        control.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(control)
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            control.topAnchor.constraint(equalTo: container.topAnchor),
+            control.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            control.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+            // 4pt binds the caption to its control; the 10pt between settings in
+            // `makeBox` then reads as the larger gap, which is what makes the
+            // grouping legible.
+            label.topAnchor.constraint(equalTo: control.bottomAnchor, constant: 4),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.captionIndent),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
+    }
+
+    /// Grouped box, System Settings style, so each setting reads as intentional.
+    func makeBox(titled title: String, content: [NSView]) -> NSBox {
+        let group = NSStackView(views: content)
+        group.orientation = .vertical
+        // `.width` (not `.leading`) so each row spans the box and the wrapping
+        // captions inside them get a width to wrap against.
+        group.alignment = .width
+        group.spacing = 10
+        group.translatesAutoresizingMaskIntoConstraints = false
+
+        let box = NSBox()
+        box.title = title
+        box.translatesAutoresizingMaskIntoConstraints = false
+        let boxContent = box.contentView ?? NSView()
+        boxContent.addSubview(group)
+        NSLayoutConstraint.activate([
+            group.topAnchor.constraint(equalTo: boxContent.topAnchor, constant: 6),
+            group.bottomAnchor.constraint(equalTo: boxContent.bottomAnchor, constant: -10),
+            group.leadingAnchor.constraint(equalTo: boxContent.leadingAnchor, constant: 8),
+            group.trailingAnchor.constraint(equalTo: boxContent.trailingAnchor, constant: -8),
+        ])
+        return box
+    }
+}
+
+// MARK: - General pane
+
+private final class GeneralPreferencesViewController: PreferencePaneViewController {
+
+    /// Pop-up listing the current download folder plus an "Other…" escape, the same
+    /// shape as Safari's "File download location".
+    private let downloadLocationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+
+    override func boxes() -> [NSBox] {
+        [makeStartupBox(), makeUploadsBox(), makeDownloadsBox()]
+    }
+
     // MARK: - Startup
 
     private func makeStartupBox() -> NSBox {
@@ -190,10 +271,22 @@ private final class GeneralPreferencesViewController: NSViewController {
         )
         checkbox.state = StrataDefaults.reconnectOnLaunch ? .on : .off
 
+        let welcomeCheckbox = NSButton(
+            checkboxWithTitle: "Show the Welcome window on launch",
+            target: self,
+            action: #selector(showWelcomeOnLaunchChanged(_:))
+        )
+        welcomeCheckbox.state = StrataDefaults.showWelcomeOnLaunch ? .on : .off
+
         return makeBox(titled: "Startup", content: [
             setting(checkbox, caption:
                 "Reopens the account and folder you were last browsing. Credentials are "
                 + "never stored — Strata asks the az CLI for a fresh token each time."
+            ),
+            setting(welcomeCheckbox, caption:
+                "Only when there's nothing to reconnect to — reconnecting takes "
+                + "precedence, since it lands you somewhere useful. Window ▸ Welcome to "
+                + "Strata opens it any time."
             ),
         ])
     }
@@ -264,63 +357,6 @@ private final class GeneralPreferencesViewController: NSViewController {
         downloadLocationPopUp.selectItem(at: 0)
     }
 
-    // MARK: - Shared chrome
-
-    /// A control with its explanatory caption beneath it. The caption is indented to
-    /// the control's title and pinned to the trailing edge, so it wraps to the real
-    /// available width instead of a hardcoded one that left a lopsided right margin.
-    private func setting(_ control: NSView, caption text: String) -> NSView {
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        captions.append(label)
-
-        control.translatesAutoresizingMaskIntoConstraints = false
-
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(control)
-        container.addSubview(label)
-        NSLayoutConstraint.activate([
-            control.topAnchor.constraint(equalTo: container.topAnchor),
-            control.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            control.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
-            // 4pt binds the caption to its control; the 10pt between settings in
-            // `makeBox` then reads as the larger gap, which is what makes the
-            // grouping legible.
-            label.topAnchor.constraint(equalTo: control.bottomAnchor, constant: 4),
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.captionIndent),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        return container
-    }
-
-    /// Grouped box, System Settings style, so each setting reads as intentional.
-    private func makeBox(titled title: String, content: [NSView]) -> NSBox {
-        let group = NSStackView(views: content)
-        group.orientation = .vertical
-        // `.width` (not `.leading`) so each row spans the box and the wrapping
-        // captions inside them get a width to wrap against.
-        group.alignment = .width
-        group.spacing = 10
-        group.translatesAutoresizingMaskIntoConstraints = false
-
-        let box = NSBox()
-        box.title = title
-        box.translatesAutoresizingMaskIntoConstraints = false
-        let boxContent = box.contentView ?? NSView()
-        boxContent.addSubview(group)
-        NSLayoutConstraint.activate([
-            group.topAnchor.constraint(equalTo: boxContent.topAnchor, constant: 6),
-            group.bottomAnchor.constraint(equalTo: boxContent.bottomAnchor, constant: -10),
-            group.leadingAnchor.constraint(equalTo: boxContent.leadingAnchor, constant: 8),
-            group.trailingAnchor.constraint(equalTo: boxContent.trailingAnchor, constant: -8),
-        ])
-        return box
-    }
-
     // MARK: - Actions
 
     @objc private func askBeforeUploadingChanged(_ sender: NSButton) {
@@ -329,6 +365,10 @@ private final class GeneralPreferencesViewController: NSViewController {
 
     @objc private func reconnectOnLaunchChanged(_ sender: NSButton) {
         StrataDefaults.reconnectOnLaunch = sender.state == .on
+    }
+
+    @objc private func showWelcomeOnLaunchChanged(_ sender: NSButton) {
+        StrataDefaults.showWelcomeOnLaunch = sender.state == .on
     }
 
     @objc private func askWhereToSaveChanged(_ sender: NSButton) {
@@ -355,5 +395,61 @@ private final class GeneralPreferencesViewController: NSViewController {
             // Rebuild either way, so cancelling restores the previous selection.
             self?.rebuildDownloadLocationMenu()
         }
+    }
+}
+
+// MARK: - Updates pane
+
+private final class UpdatesPreferencesViewController: PreferencePaneViewController {
+
+    /// Resolved lazily from the app delegate rather than injected: the Preferences
+    /// window is built on demand and the coordinator is created at launch, so there is
+    /// no ordering problem to solve — and nothing else needs to own it.
+    private var coordinator: UpdateCoordinator? {
+        (NSApp.delegate as? AppDelegate)?.updateCoordinator
+    }
+
+    override func boxes() -> [NSBox] {
+        [makeUpdatesBox()]
+    }
+
+    private func makeUpdatesBox() -> NSBox {
+        let checkbox = NSButton(
+            checkboxWithTitle: "Check for updates automatically",
+            target: self,
+            action: #selector(autoCheckChanged(_:))
+        )
+        checkbox.state = coordinator?.isAutoCheckEnabled == true ? .on : .off
+
+        let version = UpdateCoordinator.currentVersionString() ?? "unknown"
+        let versionLabel = NSTextField(labelWithString: "This copy is Strata \(version).")
+        versionLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        versionLabel.textColor = .secondaryLabelColor
+        versionLabel.isSelectable = true
+
+        let checkNow = NSButton(title: "Check Now", target: self, action: #selector(checkNow(_:)))
+        checkNow.bezelStyle = .rounded
+
+        let footer = NSStackView(views: [versionLabel, NSView(), checkNow])
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.spacing = 8
+
+        return makeBox(titled: "Updates", content: [
+            setting(checkbox, caption:
+                "Asks GitHub once a week whether a newer version has been released, and "
+                + "offers to open the release page if so. Nothing about you or your "
+                + "storage accounts is sent, and Strata never installs anything by itself."
+            ),
+            footer,
+        ])
+    }
+
+    @objc private func autoCheckChanged(_ sender: NSButton) {
+        coordinator?.setAutoCheckEnabled(sender.state == .on)
+    }
+
+    @objc private func checkNow(_ sender: Any?) {
+        coordinator?.checkManually()
     }
 }

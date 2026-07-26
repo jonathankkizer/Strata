@@ -5,13 +5,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var browserWindowControllers: [BrowserWindowController] = []
     private var preferencesWindowController: PreferencesWindowController?
+    private var welcomeWindowController: WelcomeWindowController?
     /// Held for the app's lifetime — NSMenu's delegate reference is weak.
     private let favoritesMenuController = FavoritesMenuController()
+    let updateCoordinator = UpdateCoordinator()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.build(target: self, favoritesMenuDelegate: favoritesMenuController)
-        openBrowserWindow(sender: nil)
+        openInitialWindow()
         NSApp.activate()
+        updateCoordinator.start()
+    }
+
+    private func openInitialWindow() {
+        switch LaunchPlan.decide(
+            reconnectOnLaunch: StrataDefaults.reconnectOnLaunch,
+            lastAccount: StrataDefaults.lastAccount,
+            showWelcomeOnLaunch: StrataDefaults.showWelcomeOnLaunch
+        ) {
+        case .welcome:
+            showWelcomeWindow(nil)
+        case .reconnectingBrowser, .emptyBrowser:
+            // Same call either way: the browse surface reconnects on appearance when
+            // the preference says to, so nothing extra is needed here.
+            openBrowserWindow(sender: nil)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -20,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows && browserWindowControllers.isEmpty {
-            openBrowserWindow(sender: nil)
+            openInitialWindow()
         }
         return true
     }
@@ -60,9 +78,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openBrowserWindow(sender: sender, asTab: true)
     }
 
+    @objc func checkForUpdates(_ sender: Any?) {
+        updateCoordinator.checkManually()
+    }
+
+    @objc func showWelcomeWindow(_ sender: Any?) {
+        let controller = welcomeWindowController ?? makeWelcomeWindowController()
+        welcomeWindowController = controller
+        controller.syncShowOnLaunchCheckbox()
+        controller.showWindow(sender)
+        controller.window?.makeKeyAndOrderFront(sender)
+    }
+
     // MARK: - Private
 
-    private func openBrowserWindow(sender: Any?, asTab: Bool = false) {
+    private func makeWelcomeWindowController() -> WelcomeWindowController {
+        let controller = WelcomeWindowController()
+        controller.onConnect = { [weak self] in
+            guard let self else { return }
+            // Straight into the picker in the new window — clicking "Connect…" already
+            // said what the user wants; making them find the command again wouldn't.
+            let browser = self.openBrowserWindow(sender: nil)
+            browser.browser.connectAzureStorageAccount(nil)
+        }
+        controller.onReconnect = { [weak self] account in
+            self?.openBrowserWindow(sender: nil).browser.connect(account: account)
+        }
+        controller.onOpenFavorite = { [weak self] favorite in
+            self?.openBrowserWindow(sender: nil).browser.goToFavorite(favorite)
+        }
+        return controller
+    }
+
+    @discardableResult
+    private func openBrowserWindow(sender: Any?, asTab: Bool = false) -> BrowserWindowController {
         // The first open window owns the saved frame; the rest cascade off it.
         let controller = BrowserWindowController(isPrimary: browserWindowControllers.isEmpty)
         browserWindowControllers.append(controller)
@@ -70,11 +119,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let controller else { return }
             self.browserWindowControllers.removeAll { $0 === controller }
         }
-        if asTab, let keyWindow = NSApp.keyWindow, let newWindow = controller.window {
+        // The Welcome window is not a tabbing peer; tabbing onto it would be nonsense.
+        if asTab, let keyWindow = NSApp.keyWindow,
+           keyWindow.contentViewController is BrowserSplitViewController,
+           let newWindow = controller.window {
             keyWindow.addTabbedWindow(newWindow, ordered: .above)
             newWindow.makeKeyAndOrderFront(sender)
         } else {
             controller.showWindow(sender)
         }
+        return controller
     }
 }
