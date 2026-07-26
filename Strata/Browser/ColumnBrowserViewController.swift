@@ -387,7 +387,9 @@ final class ColumnBrowserViewController: NSViewController {
 
     var provider: (any StorageProvider)?
 
-    var onSelectionChange: ((StorageObject?) -> Void)?
+    /// Columns are single-select, so this carries at most one object — the array
+    /// shape matches the list surface so the facade can treat them alike.
+    var onSelectionChange: (([StorageObject]) -> Void)?
 
     /// Fired when the deepest browse location changes, so the shared path bar updates.
     var onLocationChange: ((BrowserLocation?) -> Void)?
@@ -608,21 +610,30 @@ final class ColumnBrowserViewController: NSViewController {
         target?.forwardKeyDown(event)
     }
 
-    /// Cmd+C: copy the deepest selected object with a path (plain text) and, for a
-    /// real blob, its shareable URL — matching the list surface.
+    /// Cmd+C: copy the deepest selected object — as a file promise for a real blob
+    /// (so pasting into the Finder downloads it), plus its path and URL. Matches the
+    /// list surface.
     @objc func copy(_ sender: Any?) {
         guard let col = columns.last(where: { $0.selectedObject != nil }),
               let object = col.selectedObject else { return }
+        let container = StorageContainer(name: col.location.container)
         var key = object.key
         if key.hasSuffix("/") { key.removeLast() }
-        let item = NSPasteboardItem()
-        item.setString("\(col.location.container)/\(key)", forType: .string)
-        if !object.isPrefix, let provider,
-           let url = provider.objectURL(forKey: object.key, in: StorageContainer(name: col.location.container)) {
-            item.setString(url.absoluteString, forType: .URL)
+        let text = "\(container.name)/\(key)"
+
+        let writer: any NSPasteboardWriting
+        if let provider,
+           let promise = BlobFilePromiseProvider.make(
+               for: object, in: container, provider: provider, pathText: text
+           ) {
+            writer = promise
+        } else {
+            let item = NSPasteboardItem()
+            item.setString(text, forType: .string)
+            writer = item
         }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([item])
+        NSPasteboard.general.writeObjects([writer])
     }
 
     /// Move into the selected folder's (already-open) child column and focus it.
@@ -688,7 +699,7 @@ final class ColumnBrowserViewController: NSViewController {
             location = col.location
         }
 
-        onSelectionChange?(object)
+        onSelectionChange?(object.map { [$0] } ?? [])
     }
 
     private func scrollToRevealLastColumn() {

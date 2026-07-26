@@ -12,6 +12,7 @@ enum MainMenu {
         mainMenu.addItem(fileMenuItem(target: target))
         mainMenu.addItem(editMenuItem())
         mainMenu.addItem(viewMenuItem())
+        mainMenu.addItem(goMenuItem())
         mainMenu.addItem(windowMenuItem())
         mainMenu.addItem(helpMenuItem())
         return mainMenu
@@ -64,8 +65,6 @@ enum MainMenu {
             // Targets nil so it routes through the responder chain to the key
             // window's BrowserSplitViewController. Cmd+K mirrors Finder's
             // "Connect to Server".
-            menu.addItem(withTitle: "Connect to Azure Storage Account…", action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:)), keyEquivalent: "k")
-            menu.addItem(.separator())
             menu.addItem(withTitle: "Upload…", action: #selector(BrowserSplitViewController.uploadFiles(_:)), keyEquivalent: "u")
             // Safari's pairing: plain Download goes to the download folder, the
             // "To…" variant always asks. ⌘D is free here — there is nothing to
@@ -102,8 +101,6 @@ enum MainMenu {
             sortBy.submenu = SortMenu.makeMenu(shortcuts: true)
             menu.addItem(.separator())
             menu.addItem(withTitle: "Refresh", action: #selector(BrowserSplitViewController.refreshListing(_:)), keyEquivalent: "r")
-            let enclosing = menu.addItem(withTitle: "Enclosing Folder", action: #selector(BrowserSplitViewController.navigateToEnclosingFolder(_:)), keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1))
-            enclosing.keyEquivalentModifierMask = [.command]
             // Cmd+I: the Finder "Get Info" convention for a metadata inspector.
             menu.addItem(withTitle: "Show Inspector", action: #selector(BrowserSplitViewController.toggleObjectInspector(_:)), keyEquivalent: "i")
             menu.addItem(.separator())
@@ -115,6 +112,30 @@ enum MainMenu {
             menu.addItem(withTitle: "Customize Toolbar…", action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
             menu.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
                 .keyEquivalentModifierMask = [.command, .control]
+        }
+    }
+
+    /// Finder's Go menu: history, then hierarchy, then jumping somewhere by name.
+    /// Enclosing Folder and Connect live here rather than in View and File because
+    /// this is where a Mac user looks for them.
+    private static func goMenuItem() -> NSMenuItem {
+        submenu("Go") { menu in
+            let back = menu.addItem(withTitle: "Back", action: #selector(BrowserSplitViewController.goBack(_:)), keyEquivalent: "[")
+            back.keyEquivalentModifierMask = [.command]
+            let forward = menu.addItem(withTitle: "Forward", action: #selector(BrowserSplitViewController.goForward(_:)), keyEquivalent: "]")
+            forward.keyEquivalentModifierMask = [.command]
+            let enclosing = menu.addItem(
+                withTitle: "Enclosing Folder",
+                action: #selector(BrowserSplitViewController.navigateToEnclosingFolder(_:)),
+                keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1)
+            )
+            enclosing.keyEquivalentModifierMask = [.command]
+            menu.addItem(.separator())
+            let goTo = menu.addItem(withTitle: "Go to Folder…", action: #selector(BrowserSplitViewController.goToFolder(_:)), keyEquivalent: "g")
+            goTo.keyEquivalentModifierMask = [.command, .shift]
+            menu.addItem(.separator())
+            // ⌘K mirrors Finder's "Connect to Server…".
+            menu.addItem(withTitle: "Connect to Azure Storage Account…", action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:)), keyEquivalent: "k")
         }
     }
 

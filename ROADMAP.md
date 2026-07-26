@@ -23,14 +23,14 @@ Working today (Azure Blob Storage only):
 - **Quick Look** (Space or ⌘Y) of real blob contents, fetched into a versioned
   preview cache, with the panel following the selection as you arrow through a
   listing.
+- **Copy and paste that mean something**: ⌘C puts a file promise on the pasteboard
+  (so ⌘V in the Finder downloads the blob) alongside its path and URL, and ⌘V here
+  uploads files copied from the Finder.
+- **Go**: Back / Forward (⌘[ / ⌘]), Enclosing Folder (⌘↑), and Go to Folder… (⇧⌘G).
+- **Reconnect on launch** to the last account and folder, with a Settings toggle.
 - **Settings** (grouped, content-sized) and a notarization-ready release workflow.
 
 ## Next steps / gaps
-
-### Navigation & keyboard
-- **Back / Forward** (⌘[ / ⌘]) — needs a small navigation-history stack. The last
-  core-navigation keyboard gap.
-- **Go to Folder…** (⌘⇧G) — type a container/prefix path to jump directly.
 
 ### Read / write operations
 These are the functional gaps; several Finder shortcuts are blocked on them.
@@ -73,10 +73,9 @@ These are the functional gaps; several Finder shortcuts are blocked on them.
 - **More Settings panes** (upload strategy, credentials, event-awareness) per
   `DESIGN.md` § Preferences.
 - **Multiple simultaneous account connections** in the sidebar.
-- **Reconnect on launch** to the last account, which is also what would make
-  restoring the last browse location meaningful.
 - **Accessibility**: the main controls carry labels, but no VoiceOver pass has been
-  run over the full browse workflow.
+  run over the full browse workflow. This is the clearest remaining rubric gap and
+  needs a human at a Mac — it cannot be verified headlessly.
 
 ### Distribution
 - **Developer ID signing + notarization**: the tag-triggered release workflow is

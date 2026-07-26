@@ -8,8 +8,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     var provider: (any StorageProvider)?
 
-    /// Fired when the table's selection changes (single selection, or nil).
-    var onSelectionChange: ((StorageObject?) -> Void)?
+    /// Fired when the table's selection changes, carrying the whole selection so the
+    /// inspector can summarise a multi-selection rather than picking one row.
+    var onSelectionChange: (([StorageObject]) -> Void)?
 
     /// Fired when files or folders are dropped from Finder onto the table; folders are
     /// expanded recursively by the caller.
@@ -333,9 +334,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        let object = (row >= 0 && row < items.count) ? items[row] : nil
-        onSelectionChange?(object)
+        onSelectionChange?(selectedObjects())
     }
 
     private func present(_ error: Error) {
@@ -663,27 +662,33 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     // MARK: - Edit ▸ Copy (Cmd+C)
 
-    /// Writes the selection to the pasteboard with multiple representations so
-    /// each target gets something sensible: plain text (container/key paths) for
-    /// editors, plus a shareable URL per real blob for browsers and drop targets.
-    /// The first item carries the full joined path list so single-string targets
-    /// get every selected object, not just the first.
+    /// Writes the selection to the pasteboard so every kind of target gets something
+    /// useful. Blobs go on as **file promises**, which is what makes ⌘C here and ⌘V
+    /// in the Finder download the file — the same mechanism as dragging out, minus
+    /// the drag. Each item also carries its `container/key` path and its blob URL,
+    /// for editors and browsers respectively. The first item carries the whole joined
+    /// path list, so a single-string target gets every selected object.
     @objc func copy(_ sender: Any?) {
         let objects = selectedObjects()
         guard !objects.isEmpty, let location else { return }
         let container = StorageContainer(name: location.container)
         let joinedPaths = objects.map(fullPath(for:)).joined(separator: "\n")
 
-        let items: [NSPasteboardItem] = objects.enumerated().map { index, object in
-            let item = NSPasteboardItem()
-            item.setString(index == 0 ? joinedPaths : fullPath(for: object), forType: .string)
-            if !object.isPrefix, let url = provider?.objectURL(forKey: object.key, in: container) {
-                item.setString(url.absoluteString, forType: .URL)
+        let writers: [any NSPasteboardWriting] = objects.enumerated().map { index, object in
+            let text = index == 0 ? joinedPaths : fullPath(for: object)
+            if let provider,
+               let promise = BlobFilePromiseProvider.make(
+                   for: object, in: container, provider: provider, pathText: text
+               ) {
+                return promise
             }
+            // Folders have nothing to promise; they still copy as a path.
+            let item = NSPasteboardItem()
+            item.setString(text, forType: .string)
             return item
         }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects(items)
+        NSPasteboard.general.writeObjects(writers)
     }
 }
 
