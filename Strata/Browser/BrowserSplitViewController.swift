@@ -105,8 +105,9 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
             guard let location else { return }
             // Back/Forward set the location themselves; recording that would both
-            // duplicate the entry and wipe the forward stack.
-            if !self.isNavigatingHistory {
+            // duplicate the entry and wipe the forward stack. Arrowing between open
+            // columns is a focus move, not a visit, so it stays out of history too.
+            if !self.isNavigatingHistory, !self.content.isFocusMove {
                 self.history.record(location)
             }
             StrataDefaults.lastLocation = location

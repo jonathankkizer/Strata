@@ -416,6 +416,11 @@ final class ColumnBrowserViewController: NSViewController {
     // column creation itself, so the selection callback must not also open columns.
     private var isAutoExpanding = false
 
+    /// True only while a location change comes from moving focus between columns that
+    /// are already open, rather than from navigating somewhere new. The coordinator
+    /// reads it to keep Back/Forward a record of navigation instead of of keystrokes.
+    private(set) var isFocusMove = false
+
     // Message label shown when there is nothing to browse yet.
     private let messageLabel = NSTextField(labelWithString: "")
 
@@ -482,6 +487,11 @@ final class ColumnBrowserViewController: NSViewController {
 
         guard provider != nil else { return }
 
+        // Publish the destination up front. `clearColumns` just nilled the location,
+        // and for a container root nothing else would ever set it — leaving the path
+        // bar and window title empty until the user clicked something.
+        location = newLocation
+
         let rootLocation = BrowserLocation(container: newLocation.container, prefix: "")
         let col = addColumn(at: rootLocation)
 
@@ -504,11 +514,45 @@ final class ColumnBrowserViewController: NSViewController {
     func navigateUp() {
         let idx = focusedColumnIndex ?? (columns.isEmpty ? nil : columns.count - 1)
         guard let idx, idx > 0 else { return }
-        columns[idx - 1].focus()
+        focusColumn(at: idx - 1)
     }
 
     private var focusedColumnIndex: Int? {
         columns.firstIndex { $0.isTableFirstResponder }
+    }
+
+    // MARK: - Focus
+
+    /// Moves keyboard focus to a column and brings the rest of the UI with it: the
+    /// column is scrolled into view, and the browse location (path bar, window title,
+    /// what the Download/Quick Look commands act on) follows the selection there.
+    ///
+    /// Focus used to move on its own, which left the focused column scrolled off to
+    /// the left while the path bar still described a folder several columns deeper.
+    private func focusColumn(at index: Int) {
+        guard columns.indices.contains(index) else { return }
+        columns[index].focus()
+        scrollToReveal(columnAt: index)
+        syncLocationToFocus()
+    }
+
+    /// Republishes the location for the focused column, using the same rule a click
+    /// uses: a selected folder *is* the location, anything else means the column's
+    /// own folder.
+    private func syncLocationToFocus() {
+        guard let index = focusedColumnIndex else { return }
+        let col = columns[index]
+        // Flagged so the coordinator can tell a focus move from a real navigation and
+        // keep Back/Forward meaningful — arrowing between open columns should not
+        // pile up history entries.
+        isFocusMove = true
+        defer { isFocusMove = false }
+
+        if let selected = col.selectedObject, selected.isPrefix {
+            location = BrowserLocation(container: col.location.container, prefix: selected.key)
+        } else {
+            location = col.location
+        }
     }
 
     func reload() {
@@ -527,12 +571,13 @@ final class ColumnBrowserViewController: NSViewController {
         outerScrollView.isHidden = true
     }
 
-    /// Open the deepest selection — ⌘O / ⌘↓ / →. A folder enters its column; a blob
-    /// downloads, matching the list surface.
+    /// Open the selection — ⌘O / ⌘↓ / →. A folder enters its column; a blob downloads,
+    /// matching the list surface. Acts on the focused column, so it opens what is
+    /// highlighted rather than whatever sits deepest.
     func openSelection() {
-        guard let idx = columns.lastIndex(where: { $0.selectedObject != nil }) else { return }
-        if columns[idx].selectedObject?.isPrefix == true {
-            enterChild(of: columns[idx])
+        guard let col = activeColumn, let object = col.selectedObject else { return }
+        if object.isPrefix {
+            enterChild(of: col)
         } else {
             NSApp.sendAction(#selector(BrowserSplitViewController.downloadSelection(_:)), to: nil, from: self)
         }
@@ -582,9 +627,13 @@ final class ColumnBrowserViewController: NSViewController {
 
     // MARK: - Selection (for Download)
 
-    /// The deepest selected column, if any — the one the user is acting on.
+    /// The column the user is acting on. The focused one wins: after arrowing back to
+    /// a parent, Download, Quick Look, and Copy must act on the row highlighted there,
+    /// not on a deeper column the user has navigated away from. Falls back to the
+    /// deepest selection when focus is elsewhere entirely (a toolbar click, say).
     private var activeColumn: BrowseColumn? {
-        columns.last(where: { $0.selectedObject != nil })
+        if let index = focusedColumnIndex { return columns[index] }
+        return columns.last(where: { $0.selectedObject != nil })
     }
 
     /// The real blobs in the current selection. Columns are single-select, so this is
@@ -606,16 +655,14 @@ final class ColumnBrowserViewController: NSViewController {
 
     /// Replays a key event into the focused column's table.
     func forwardKeyDown(_ event: NSEvent) {
-        let target = columns.first(where: { $0.isTableFirstResponder }) ?? activeColumn
-        target?.forwardKeyDown(event)
+        activeColumn?.forwardKeyDown(event)
     }
 
-    /// Cmd+C: copy the deepest selected object — as a file promise for a real blob
-    /// (so pasting into the Finder downloads it), plus its path and URL. Matches the
+    /// Cmd+C: copy the selected object — as a file promise for a real blob (so
+    /// pasting into the Finder downloads it), plus its path and URL. Matches the
     /// list surface.
     @objc func copy(_ sender: Any?) {
-        guard let col = columns.last(where: { $0.selectedObject != nil }),
-              let object = col.selectedObject else { return }
+        guard let col = activeColumn, let object = col.selectedObject else { return }
         let container = StorageContainer(name: col.location.container)
         var key = object.key
         if key.hasSuffix("/") { key.removeLast() }
@@ -643,13 +690,13 @@ final class ColumnBrowserViewController: NSViewController {
         let childIndex = idx + 1
         guard childIndex < columns.count else { return }
         columns[childIndex].selectFirstRow()
-        columns[childIndex].focus()
+        focusColumn(at: childIndex)
     }
 
     /// Move focus to the parent column (←).
     private func focusParent(of col: BrowseColumn) {
         guard let idx = columns.firstIndex(where: { $0 === col }), idx > 0 else { return }
-        columns[idx - 1].focus()
+        focusColumn(at: idx - 1)
     }
 
     private func clearColumns() {
@@ -703,10 +750,18 @@ final class ColumnBrowserViewController: NSViewController {
     }
 
     private func scrollToRevealLastColumn() {
-        guard let last = columns.last else { return }
+        scrollToReveal(columnAt: columns.count - 1)
+    }
+
+    /// Scrolls the horizontal strip so a column is fully on screen. `scrollToVisible`
+    /// moves the minimum needed, so revealing a column to the left parks it against
+    /// the leading edge with its children still visible to the right — the same
+    /// framing the Finder settles on.
+    private func scrollToReveal(columnAt index: Int) {
+        guard columns.indices.contains(index) else { return }
         // Flush the layout so the frame is valid before we scroll.
         stackView.layoutSubtreeIfNeeded()
-        let frame = outerScrollView.contentView.convert(last.containerView.frame, from: stackView)
+        let frame = outerScrollView.contentView.convert(columns[index].containerView.frame, from: stackView)
         outerScrollView.contentView.scrollToVisible(frame)
     }
 
@@ -800,18 +855,36 @@ final class ColumnBrowserViewController: NSViewController {
 
         // The folder key is prefix + segment + "/".
         let targetKey = col.location.prefix + first + "/"
-        guard let item = col.items.first(where: { $0.key == targetKey }), item.isPrefix else { return }
+        guard let item = col.items.first(where: { $0.key == targetKey }), item.isPrefix else {
+            // The saved path no longer exists. Settle where we actually got to, and
+            // put focus there, rather than claiming to be somewhere we are not.
+            if let index = columns.firstIndex(where: { $0 === col }) {
+                focusColumn(at: index)
+            }
+            return
+        }
 
         isAutoExpanding = true
         col.selectRow(for: targetKey)
         isAutoExpanding = false
-        location = BrowserLocation(container: col.location.container, prefix: item.key)
+        // Intermediate steps are deliberately not published: `show` already set the
+        // destination, and announcing every rung of the ladder would flicker the path
+        // bar and stack up spurious Back entries on the way to one folder.
 
         // Open next column and continue.
         let nextLocation = BrowserLocation(container: col.location.container, prefix: item.key)
         let nextCol = addColumn(at: nextLocation)
-        scrollToRevealLastColumn()
         loadColumn(nextCol, thenExpand: rest)
+
+        if rest.isEmpty, let index = columns.firstIndex(where: { $0 === col }) {
+            // Arrived. Focus the column holding the selection and scroll it into
+            // view — otherwise a deep navigation left focus stranded on column 0
+            // while the strip was scrolled to the far right, so the first arrow key
+            // moved a highlight the user could not see.
+            focusColumn(at: index)
+        } else {
+            scrollToRevealLastColumn()
+        }
     }
 
     // MARK: - Sorting (folders always before blobs)
