@@ -1,0 +1,35 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per branch: pushing again cancels the previous, in-flight run rather
+# than paying for both. macOS minutes bill at 10x on private repos.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Must be macos-26 or newer: MACOSX_DEPLOYMENT_TARGET is 26.0, and the test
+    # bundle is hosted by the app — so on an older runner the app cannot launch and
+    # the tests cannot run, even though the build would succeed.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build and test
+        run: |
+          xcodebuild \
+            -project Strata.xcodeproj \
+            -scheme Strata \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            test
