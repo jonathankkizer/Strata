@@ -112,11 +112,22 @@ extension PreferencesWindowController: NSToolbarDelegate {
 
 private final class GeneralPreferencesViewController: NSViewController {
 
-    private let contentWidth: CGFloat = 430
+    /// Standard macOS settings-window content width. Height is measured from the
+    /// content rather than guessed, so the window hugs the panes.
+    private static let windowWidth: CGFloat = 520
+
+    /// Where a regular NSButton checkbox's *title* starts, measured from the
+    /// button's leading edge. Captions line up with the title, not with the box —
+    /// the System Settings / Safari convention.
+    private static let captionIndent: CGFloat = 20
 
     /// Pop-up listing the current download folder plus an "Other…" escape, the same
     /// shape as Safari's "File download location".
     private let downloadLocationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+
+    /// Wrapping captions can't resolve their own height until something tells them
+    /// how wide they are; `viewDidLayout` feeds them their real width.
+    private var captions: [NSTextField] = []
 
     override func loadView() {
         let root = NSView()
@@ -130,6 +141,7 @@ private final class GeneralPreferencesViewController: NSViewController {
         root.addSubview(stack)
 
         NSLayoutConstraint.activate([
+            root.widthAnchor.constraint(equalToConstant: Self.windowWidth),
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
@@ -137,7 +149,35 @@ private final class GeneralPreferencesViewController: NSViewController {
         ] + boxes.map { $0.widthAnchor.constraint(equalTo: stack.widthAnchor) })
         view = root
 
-        preferredContentSize = NSSize(width: 520, height: 440)
+        updatePreferredContentSize()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        if syncCaptionWrapWidths() {
+            updatePreferredContentSize()
+        }
+    }
+
+    /// Returns true when a width actually changed, so callers can avoid an
+    /// unnecessary second layout pass (and the loop that would come with it).
+    @discardableResult
+    private func syncCaptionWrapWidths() -> Bool {
+        var changed = false
+        for caption in captions {
+            let width = caption.frame.width
+            guard width > 0, abs(caption.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            caption.preferredMaxLayoutWidth = width
+            changed = true
+        }
+        return changed
+    }
+
+    private func updatePreferredContentSize() {
+        view.layoutSubtreeIfNeeded()
+        syncCaptionWrapWidths()
+        view.layoutSubtreeIfNeeded()
+        preferredContentSize = NSSize(width: Self.windowWidth, height: view.fittingSize.height)
     }
 
     // MARK: - Startup
@@ -150,11 +190,12 @@ private final class GeneralPreferencesViewController: NSViewController {
         )
         checkbox.state = StrataDefaults.reconnectOnLaunch ? .on : .off
 
-        let description = explanatoryLabel(
-            "Reopens the account and folder you were last browsing. Credentials are "
-            + "never stored — Strata asks the az CLI for a fresh token each time."
-        )
-        return makeBox(titled: "Startup", content: [checkbox, description])
+        return makeBox(titled: "Startup", content: [
+            setting(checkbox, caption:
+                "Reopens the account and folder you were last browsing. Credentials are "
+                + "never stored — Strata asks the az CLI for a fresh token each time."
+            ),
+        ])
     }
 
     // MARK: - Uploads
@@ -167,11 +208,12 @@ private final class GeneralPreferencesViewController: NSViewController {
         )
         checkbox.state = StrataDefaults.askBeforeUploading ? .on : .off
 
-        let description = explanatoryLabel(
-            "Shows each file's predicted Event Grid event before the upload starts. " +
-            "When off, uploads begin immediately and predictions appear in the Transfers list."
-        )
-        return makeBox(titled: "Uploads", content: [checkbox, description])
+        return makeBox(titled: "Uploads", content: [
+            setting(checkbox, caption:
+                "Shows each file's predicted Event Grid event before the upload starts. "
+                + "When off, uploads begin immediately and predictions appear in the Transfers list."
+            ),
+        ])
     }
 
     // MARK: - Downloads
@@ -195,11 +237,13 @@ private final class GeneralPreferencesViewController: NSViewController {
         )
         askCheckbox.state = StrataDefaults.askWhereToSaveDownloads ? .on : .off
 
-        let description = explanatoryLabel(
-            "File ▸ Download saves here without asking. Download To… always asks, " +
-            "and dragging a blob to the Finder downloads it wherever you drop it."
-        )
-        return makeBox(titled: "Downloads", content: [locationRow, askCheckbox, description])
+        return makeBox(titled: "Downloads", content: [
+            locationRow,
+            setting(askCheckbox, caption:
+                "File ▸ Download saves here without asking. Download To… always asks, "
+                + "and dragging a blob to the Finder downloads it wherever you drop it."
+            ),
+        ])
     }
 
     /// Shows the folder with its real Finder icon, plus the "Other…" chooser.
@@ -222,21 +266,45 @@ private final class GeneralPreferencesViewController: NSViewController {
 
     // MARK: - Shared chrome
 
-    private func explanatoryLabel(_ text: String) -> NSTextField {
+    /// A control with its explanatory caption beneath it. The caption is indented to
+    /// the control's title and pinned to the trailing edge, so it wraps to the real
+    /// available width instead of a hardcoded one that left a lopsided right margin.
+    private func setting(_ control: NSView, caption text: String) -> NSView {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
-        label.preferredMaxLayoutWidth = contentWidth
-        label.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
-        return label
+        label.translatesAutoresizingMaskIntoConstraints = false
+        captions.append(label)
+
+        control.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(control)
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            control.topAnchor.constraint(equalTo: container.topAnchor),
+            control.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            control.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+            // 4pt binds the caption to its control; the 10pt between settings in
+            // `makeBox` then reads as the larger gap, which is what makes the
+            // grouping legible.
+            label.topAnchor.constraint(equalTo: control.bottomAnchor, constant: 4),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.captionIndent),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
     }
 
     /// Grouped box, System Settings style, so each setting reads as intentional.
     private func makeBox(titled title: String, content: [NSView]) -> NSBox {
         let group = NSStackView(views: content)
         group.orientation = .vertical
-        group.alignment = .leading
-        group.spacing = 6
+        // `.width` (not `.leading`) so each row spans the box and the wrapping
+        // captions inside them get a width to wrap against.
+        group.alignment = .width
+        group.spacing = 10
         group.translatesAutoresizingMaskIntoConstraints = false
 
         let box = NSBox()

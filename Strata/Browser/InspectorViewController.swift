@@ -13,6 +13,25 @@ private final class FlippedView: NSView {
 @MainActor
 final class InspectorViewController: NSViewController {
 
+    /// A label/value pair, plus whether the value is prose (wraps onto more lines)
+    /// or a single unbreakable token (truncates in the middle).
+    private struct Row {
+        let label: String
+        let value: String
+        let wraps: Bool
+
+        init(_ label: String, _ value: String, wraps: Bool = true) {
+            self.label = label
+            self.value = value
+            self.wraps = wraps
+        }
+    }
+
+    /// Between rows within a section. Needs to stay comfortably larger than the
+    /// line spacing inside a wrapped value, or a multi-line value and the row below
+    /// it read as one block.
+    private static let rowSpacing: CGFloat = 7
+
     private let stack = NSStackView()
     private let scrollView = NSScrollView()
     private var loadToken = 0
@@ -105,26 +124,30 @@ final class InspectorViewController: NSViewController {
         stack.addArrangedSubview(headerView(for: object, metadata: metadata))
 
         if object.isPrefix {
-            stack.addArrangedSubview(section("Kind", rows: [("Type", "Folder (prefix)")]))
+            stack.addArrangedSubview(section("Kind", rows: [Row("Type", "Folder (prefix)")]))
             return
         }
 
-        var general: [(String, String)] = [
-            ("Name", lastComponent(of: object.key)),
-            ("Path", object.key),
-            ("Size", byteFormatter.string(fromByteCount: metadata?.size ?? object.size)),
-            ("Tier", metadata?.storageClass ?? object.storageClass ?? "—"),
-            ("Type", metadata?.contentType ?? object.contentType ?? "—"),
+        // No "Name" row: the header above already shows the filename, at a size
+        // meant to be read. Repeating it here cost four wrapped lines to say the
+        // same thing — Finder's Get Info doesn't repeat it either.
+        var general: [Row] = [
+            Row("Path", object.key, wraps: false),
+            Row("Size", byteFormatter.string(fromByteCount: metadata?.size ?? object.size)),
+            Row("Tier", metadata?.storageClass ?? object.storageClass ?? "—"),
+            Row("Type", metadata?.contentType ?? object.contentType ?? "—", wraps: false),
         ]
-        if let blobType = metadata?.blobType { general.append(("Blob Type", blobType)) }
+        if let blobType = metadata?.blobType { general.append(Row("Blob Type", blobType)) }
         if let modified = metadata?.lastModified ?? object.lastModified {
-            general.append(("Modified", dateFormatter.string(from: modified)))
+            general.append(Row("Modified", dateFormatter.string(from: modified)))
         }
-        if let etag = metadata?.etag ?? object.etag { general.append(("ETag", etag)) }
+        if let etag = metadata?.etag ?? object.etag {
+            general.append(Row("ETag", Self.displayETag(etag), wraps: false))
+        }
         stack.addArrangedSubview(section("General", rows: general))
 
         if let custom = metadata?.custom, !custom.isEmpty {
-            let rows = custom.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+            let rows = custom.sorted { $0.key < $1.key }.map { Row($0.key, $0.value) }
             stack.addArrangedSubview(section("Metadata", rows: rows))
         }
 
@@ -150,15 +173,15 @@ final class InspectorViewController: NSViewController {
         stack.alignment = .width
         stack.addArrangedSubview(multipleHeaderView(count: objects.count, totalBytes: totalBytes, blobCount: blobs.count))
 
-        var rows: [(String, String)] = [("Items", "\(objects.count)")]
+        var rows: [Row] = [Row("Items", "\(objects.count)")]
         if !folders.isEmpty {
-            rows.append(("Folders", "\(folders.count)"))
+            rows.append(Row("Folders", "\(folders.count)"))
         }
         if !blobs.isEmpty {
-            rows.append(("Blobs", "\(blobs.count)"))
-            rows.append(("Total Size", byteFormatter.string(fromByteCount: totalBytes)))
+            rows.append(Row("Blobs", "\(blobs.count)"))
+            rows.append(Row("Total Size", byteFormatter.string(fromByteCount: totalBytes)))
             if let largest = blobs.max(by: { $0.size < $1.size }) {
-                rows.append(("Largest", "\(lastComponent(of: largest.key)) — \(byteFormatter.string(fromByteCount: largest.size))"))
+                rows.append(Row("Largest", "\(lastComponent(of: largest.key)) — \(byteFormatter.string(fromByteCount: largest.size))"))
             }
         }
         stack.addArrangedSubview(section("Selection", rows: rows))
@@ -217,8 +240,8 @@ final class InspectorViewController: NSViewController {
 
         let container = NSStackView()
         container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 6
+        container.alignment = .width
+        container.spacing = Self.rowSpacing
         container.translatesAutoresizingMaskIntoConstraints = false
         container.addArrangedSubview(sectionHeader("Event Grid"))
 
@@ -307,10 +330,10 @@ final class InspectorViewController: NSViewController {
         let api = plan.predictedCommitAPI
         let operation = api == .putBlob ? "Put Blob (single-shot)" : "Put Block List (staged)"
 
-        var container = NSStackView()
+        let container = NSStackView()
         container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 6
+        container.alignment = .width
+        container.spacing = Self.rowSpacing
         container.translatesAutoresizingMaskIntoConstraints = false
 
         container.addArrangedSubview(sectionHeader("Event Grid"))
@@ -333,18 +356,24 @@ final class InspectorViewController: NSViewController {
         status.orientation = .horizontal
         status.alignment = .firstBaseline
         status.spacing = 6
+        // Indented to the value column: this line elaborates on "Emits" above it,
+        // and starting it out in the label gutter made it look like a fourth row
+        // whose label had gone missing.
+        status.edgeInsets = NSEdgeInsets(top: 0, left: Self.labelColumnWidth + 8, bottom: 0, right: 0)
         container.addArrangedSubview(status)
         return container
     }
 
-    private func section(_ title: String, rows pairs: [(String, String)]) -> NSView {
+    private func section(_ title: String, rows: [Row]) -> NSView {
         let container = NSStackView()
         container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 5
+        // `.width`, not `.leading`: rows have to span the pane for the value column
+        // to know how much room it has (and so truncating values can truncate).
+        container.alignment = .width
+        container.spacing = Self.rowSpacing
         container.addArrangedSubview(sectionHeader(title))
-        for (label, value) in pairs {
-            container.addArrangedSubview(row(label, value))
+        for row in rows {
+            container.addArrangedSubview(self.row(row.label, row.value, wraps: row.wraps))
         }
         return container
     }
@@ -390,19 +419,39 @@ final class InspectorViewController: NSViewController {
         return field
     }
 
-    private func row(_ label: String, _ value: String) -> NSView {
+    /// Width of the right-aligned label gutter. Sized to the longest label actually
+    /// used ("Blob Type", "Total Size") and no wider: the inspector is a narrow,
+    /// user-resizable pane, and every point spent here comes straight out of the
+    /// value column, which is what forces values to wrap.
+    private static let labelColumnWidth: CGFloat = 62
+
+    /// `wraps: false` is for single-token values — paths, MIME types, ETags. They
+    /// have no word boundaries to break on, so wrapping them shatters the token
+    /// mid-word across four lines; Finder's Get Info truncates such values (its
+    /// "Where:" row) and keeps the whole string reachable by selection and tooltip.
+    private func row(_ label: String, _ value: String, wraps: Bool = true) -> NSView {
         let labelField = NSTextField(labelWithString: label)
         labelField.alignment = .right
         labelField.font = .systemFont(ofSize: 11)
         labelField.textColor = .secondaryLabelColor
         labelField.setContentHuggingPriority(.required, for: .horizontal)
         labelField.setContentCompressionResistancePriority(.required, for: .horizontal)
-        labelField.widthAnchor.constraint(equalToConstant: 78).isActive = true
+        labelField.widthAnchor.constraint(equalToConstant: Self.labelColumnWidth).isActive = true
 
-        let valueField = NSTextField(wrappingLabelWithString: value)
+        let valueField = wraps
+            ? NSTextField(wrappingLabelWithString: value)
+            : NSTextField(labelWithString: value)
         valueField.font = .systemFont(ofSize: 12)
         valueField.isSelectable = true
         valueField.textColor = .labelColor
+        if !wraps {
+            valueField.lineBreakMode = .byTruncatingMiddle
+            valueField.cell?.usesSingleLineMode = true
+            valueField.toolTip = value
+            // Without this the intrinsic width of a long token wins and pushes the
+            // pane wider instead of truncating.
+            valueField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
 
         let row = NSStackView(views: [labelField, valueField])
         row.orientation = .horizontal
@@ -411,6 +460,19 @@ final class InspectorViewController: NSViewController {
         row.distribution = .fill
         valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return row
+    }
+
+    /// Azure returns the ETag as an HTTP entity tag, quotes included
+    /// (`"0x8DEE126C27919F8"`). The quotes are protocol syntax, not part of the
+    /// value, and showing them invites copying them into a query by mistake.
+    /// Internal rather than private so `@testable` can reach it.
+    static func displayETag(_ etag: String) -> String {
+        var trimmed = etag.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("W/") { trimmed.removeFirst(2) }   // weak validator
+        if trimmed.count >= 2, trimmed.hasPrefix("\""), trimmed.hasSuffix("\"") {
+            trimmed = String(trimmed.dropFirst().dropLast())
+        }
+        return trimmed
     }
 
     private func lastComponent(of key: String) -> String {
