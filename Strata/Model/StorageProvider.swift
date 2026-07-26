@@ -70,7 +70,7 @@ extension StorageProvider {
     }
 }
 
-enum StorageProviderError: Error, Sendable {
+enum StorageProviderError: Error, Sendable, Equatable {
     case notImplemented
     /// Azure: a valid Entra token, but the identity lacks a `Storage Blob Data *`
     /// role. Management-plane roles (Owner/Contributor/Reader) do NOT grant data
