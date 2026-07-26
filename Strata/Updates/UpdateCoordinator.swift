@@ -31,6 +31,14 @@ final class UpdateCoordinator {
     // MARK: - Lifecycle
 
     func start() {
+        // The test bundle is app-hosted, so `xcodebuild test` launches this app for
+        // real. Nobody is there to answer a modal, and `NSAlert.runModal()` waits
+        // forever — which hangs the whole job, including the release workflow's
+        // pre-signing test run. Locally the tests happened to finish before the delay
+        // below elapsed; a slower runner loses that race, so this can't be left to
+        // timing.
+        guard !Self.isRunningTests else { return }
+
         Task { @MainActor in
             // Launch belongs to the app, not to a dialog about updates. Two seconds
             // is enough for the browser or Welcome window to be up and settled.
@@ -39,6 +47,17 @@ final class UpdateCoordinator {
             runScheduledCheckIfDue()
         }
         scheduleTick()
+    }
+
+    /// Whether this process was launched as a test host. XCTest's framework is loaded
+    /// into the host app, and it sets these variables in the environment, so either
+    /// signal alone is enough — both are checked because the Swift Testing bundle
+    /// still runs under the XCTest harness.
+    static var isRunningTests: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
 
     private func scheduleTick() {

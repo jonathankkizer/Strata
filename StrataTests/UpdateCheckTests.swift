@@ -180,6 +180,29 @@ struct UpdateScheduleTests {
     }
 }
 
+// MARK: - Test-host guard
+
+/// The test bundle is app-hosted, so these tests run inside a live Strata. If the
+/// update lifecycle ever starts under test again it will raise a consent modal with
+/// nobody to dismiss it and hang the job — including the release workflow's
+/// pre-signing test run. Failing here instead is the whole point.
+@Suite("Update lifecycle stays out of test runs")
+@MainActor
+struct UpdateTestHostGuardTests {
+
+    @Test("Test-host detection works in this environment")
+    func detectsTestHost() {
+        #expect(UpdateCoordinator.isRunningTests)
+    }
+
+    /// If the guard regresses, this hangs rather than fails — which is exactly the
+    /// symptom it exists to prevent, and why the detection above is asserted directly.
+    @Test("start() is inert under tests")
+    func startIsInert() {
+        UpdateCoordinator().start()
+    }
+}
+
 // MARK: - Preferences
 
 @Suite("Update preferences")
