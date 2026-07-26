@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Straight into the picker in the new window — clicking "Connect…" already
             // said what the user wants; making them find the command again wouldn't.
             let browser = self.openBrowserWindow(sender: nil)
-            browser.browser.connectAzureStorageAccount(nil)
+            browser.browser.connectStorageAccount(nil)
         }
         controller.onReconnect = { [weak self] account in
             self?.openBrowserWindow(sender: nil).browser.connect(account: account)

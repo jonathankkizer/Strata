@@ -116,12 +116,14 @@ final class TransferRowView: NSView {
             systemSymbolName: item.direction == .upload ? "arrow.up.doc" : "arrow.down.doc",
             accessibilityDescription: item.direction == .upload ? "Upload" : "Download"
         )
-        // Only uploads emit a storage event, so only uploads carry the api badge.
-        if let api = item.predictedAPI {
-            badgeLabel.stringValue = api.rawValue
+        // Only uploads emit a storage event, so only uploads carry the event badge.
+        if let event = item.predictedEvent {
+            badgeLabel.stringValue = event.eventName
+            badgeBox.toolTip = event.summary
             badgeBox.isHidden = false
         } else {
             badgeLabel.stringValue = ""
+            badgeBox.toolTip = nil
             badgeBox.isHidden = true
         }
 

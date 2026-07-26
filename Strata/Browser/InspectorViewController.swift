@@ -35,6 +35,10 @@ final class InspectorViewController: NSViewController {
     private let stack = NSStackView()
     private let scrollView = NSScrollView()
     private var loadToken = 0
+    /// Which cloud the shown objects live on. Event prediction is stated in the
+    /// provider's own vocabulary, so with no provider connected there is nothing
+    /// truthful to predict and the section is omitted.
+    private var providerKind: ProviderKind?
 
     private let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -89,6 +93,7 @@ final class InspectorViewController: NSViewController {
     func present(objects: [StorageObject], provider: (any StorageProvider)?, containerName: String?) {
         loadToken += 1
         let token = loadToken
+        providerKind = provider?.kind
 
         guard objects.count == 1 else {
             rebuildForMultiple(objects)
@@ -151,7 +156,9 @@ final class InspectorViewController: NSViewController {
             stack.addArrangedSubview(section("Metadata", rows: rows))
         }
 
-        stack.addArrangedSubview(eventGridSection(for: object))
+        if let providerKind {
+            stack.addArrangedSubview(writeEventSection(for: object, kind: providerKind))
+        }
     }
 
     /// Finder's multiple-selection Get Info: how many, how big, and what mix.
@@ -188,8 +195,8 @@ final class InspectorViewController: NSViewController {
 
         // The differentiator still applies in bulk: re-uploading this selection emits
         // a mix of events, and which ones is exactly what the user wants to know.
-        if !blobs.isEmpty {
-            stack.addArrangedSubview(multipleEventGridSection(for: blobs))
+        if !blobs.isEmpty, let providerKind {
+            stack.addArrangedSubview(multipleWriteEventSection(for: blobs, kind: providerKind))
         }
     }
 
@@ -231,11 +238,14 @@ final class InspectorViewController: NSViewController {
     }
 
     /// Counts how many of the selected blobs would emit each `data.api` on re-upload.
-    private func multipleEventGridSection(for blobs: [StorageObject]) -> NSView {
-        var counts: [BlobWriteAPI: Int] = [:]
+    private func multipleWriteEventSection(for blobs: [StorageObject], kind: ProviderKind) -> NSView {
+        let target = UploadTarget.default(for: kind)
+        var counts: [String: Int] = [:]
+        var systemName = ""
         for blob in blobs {
-            let api = UploadPlan(byteCount: blob.size, endpoint: .blob).predictedCommitAPI
-            counts[api, default: 0] += 1
+            let event = UploadPlan(byteCount: blob.size, target: target).predictedEvent
+            systemName = event.systemName
+            counts[event.eventName, default: 0] += 1
         }
 
         let container = NSStackView()
@@ -243,10 +253,12 @@ final class InspectorViewController: NSViewController {
         container.alignment = .width
         container.spacing = Self.rowSpacing
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.addArrangedSubview(sectionHeader("Event Grid"))
+        container.addArrangedSubview(sectionHeader(systemName))
 
-        for (api, count) in counts.sorted(by: { $0.value > $1.value }) {
-            container.addArrangedSubview(row(api.rawValue, "\(count) of \(blobs.count) on re-upload"))
+        // Ties broken by name so the order doesn't wobble between selections of the
+        // same shape — dictionary order isn't stable.
+        for (name, count) in counts.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) }) {
+            container.addArrangedSubview(row(name, "\(count) of \(blobs.count) on re-upload"))
         }
         return container
     }
@@ -325,10 +337,11 @@ final class InspectorViewController: NSViewController {
         return .data
     }
 
-    private func eventGridSection(for object: StorageObject) -> NSView {
-        let plan = UploadPlan(byteCount: object.size, endpoint: .blob)
-        let api = plan.predictedCommitAPI
-        let operation = api == .putBlob ? "Put Blob (single-shot)" : "Put Block List (staged)"
+    private func writeEventSection(for object: StorageObject, kind: ProviderKind) -> NSView {
+        let event = UploadPlan(
+            byteCount: object.size,
+            target: .default(for: kind)
+        ).predictedEvent
 
         let container = NSStackView()
         container.orientation = .vertical
@@ -336,19 +349,17 @@ final class InspectorViewController: NSViewController {
         container.spacing = Self.rowSpacing
         container.translatesAutoresizingMaskIntoConstraints = false
 
-        container.addArrangedSubview(sectionHeader("Event Grid"))
-        container.addArrangedSubview(row("Re-upload", operation))
-        container.addArrangedSubview(row("Emits", "BlobCreated · api: \(api.rawValue)"))
+        container.addArrangedSubview(sectionHeader(event.systemName))
+        container.addArrangedSubview(row("Re-upload", event.operationSummary))
+        container.addArrangedSubview(row("Emits", event.emissionSummary))
 
-        let fires = api.firesBlobCreatedOnCommit
+        let reassuring = event.confidence.isReassuring
         let statusImage = NSImageView()
-        statusImage.image = NSImage(systemSymbolName: fires ? "checkmark.circle.fill" : "exclamationmark.triangle.fill", accessibilityDescription: nil)
-        statusImage.contentTintColor = fires ? .systemGreen : .systemOrange
+        statusImage.image = NSImage(systemSymbolName: reassuring ? "checkmark.circle.fill" : "exclamationmark.triangle.fill", accessibilityDescription: nil)
+        statusImage.contentTintColor = reassuring ? .systemGreen : .systemOrange
         statusImage.setContentHuggingPriority(.required, for: .horizontal)
 
-        let statusText = NSTextField(wrappingLabelWithString: fires
-            ? "Fires standard BlobCreated subscriptions."
-            : "Won't match standard BlobCreated filters.")
+        let statusText = NSTextField(wrappingLabelWithString: event.confidence.message)
         statusText.font = .systemFont(ofSize: 11)
         statusText.textColor = .secondaryLabelColor
 

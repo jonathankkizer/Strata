@@ -1,5 +1,12 @@
 import Foundation
 
+/// The session's own failures. Previously this threw `AzureBlobError.notHTTPResponse`
+/// — a provider-neutral class reaching into one provider's error type, which is how a
+/// leak starts.
+enum DownloadSessionError: Error, Sendable {
+    case notHTTPResponse
+}
+
 /// Runs URLSession download tasks with real byte progress.
 ///
 /// The obvious spelling — `URLSession.download(for:delegate:)` with a task delegate —
@@ -94,7 +101,7 @@ extension DownloadSession: URLSessionDownloadDelegate {
         do {
             try FileManager.default.moveItem(at: location, to: owned)
             guard let http = downloadTask.response as? HTTPURLResponse else {
-                throw AzureBlobError.notHTTPResponse
+                throw DownloadSessionError.notHTTPResponse
             }
             result = .success((owned, http))
         } catch {

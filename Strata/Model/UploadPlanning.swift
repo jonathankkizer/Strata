@@ -13,7 +13,7 @@ struct PlannedUpload: Sendable {
 /// file keyed under the directory's own name. Results are sorted by key so the
 /// queue order is deterministic.
 enum UploadPlanning {
-    nonisolated static func expand(urls: [URL], prefix: String) -> [PlannedUpload] {
+    nonisolated static func expand(urls: [URL], prefix: String, target: UploadTarget) -> [PlannedUpload] {
         var results: [PlannedUpload] = []
 
         for url in urls {
@@ -45,7 +45,7 @@ enum UploadPlanning {
                     results.append(PlannedUpload(
                         url: fileURL,
                         key: key,
-                        plan: UploadPlan(byteCount: size, endpoint: .blob),
+                        plan: UploadPlan(byteCount: size, target: target),
                         contentType: contentType
                     ))
                 }
@@ -56,7 +56,7 @@ enum UploadPlanning {
                 results.append(PlannedUpload(
                     url: url,
                     key: prefix + url.lastPathComponent,
-                    plan: UploadPlan(byteCount: size, endpoint: .blob),
+                    plan: UploadPlan(byteCount: size, target: target),
                     contentType: contentType
                 ))
             }

@@ -35,7 +35,7 @@ final class FavoritesStore {
 
     /// Whether this exact place is already saved — drives "Add to Sidebar" being
     /// disabled rather than silently creating a second copy.
-    func contains(account: String, location: BrowserLocation) -> Bool {
+    func contains(account: ProviderAccount, location: BrowserLocation) -> Bool {
         favorites.contains {
             $0.account == account && $0.container == location.container && $0.prefix == location.prefix
         }

@@ -15,8 +15,8 @@ final class WelcomeWindowController: NSWindowController, NSTableViewDataSource, 
     /// Open a browser window pointed at a saved place, reconnecting if it belongs to
     /// another account.
     var onOpenFavorite: ((Favorite) -> Void)?
-    /// Reconnect to a named account without going through the picker.
-    var onReconnect: ((String) -> Void)?
+    /// Reconnect to a known account without going through the picker.
+    var onReconnect: ((ProviderAccount) -> Void)?
 
     private let favoritesTable = NSTableView()
     private let scrollView = NSScrollView()
@@ -152,7 +152,7 @@ final class WelcomeWindowController: NSWindowController, NSTableViewDataSource, 
         // the first place, because a window has already gone and reconnected.
         if let account = StrataDefaults.lastAccount, !account.isEmpty {
             buttons.append(makeActionButton(
-                title: "Reconnect to \(account)",
+                title: "Reconnect to \(account.name)",
                 symbolName: "arrow.clockwise",
                 action: #selector(reconnectClicked(_:))
             ))
@@ -321,7 +321,9 @@ final class WelcomeWindowController: NSWindowController, NSTableViewDataSource, 
 
         // The account matters here in a way it doesn't in the sidebar: this list can
         // span accounts, and opening one may mean reconnecting.
-        let subtitle = NSTextField(labelWithString: "\(favorite.account) — \(favorite.location.path)")
+        // The account is qualified with its cloud: this list spans providers, and two
+        // of them can each have an account called "prod".
+        let subtitle = NSTextField(labelWithString: "\(favorite.account.qualifiedName) — \(favorite.location.path)")
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingMiddle

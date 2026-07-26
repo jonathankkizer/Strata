@@ -48,8 +48,10 @@ final class TransferItem {
     /// Expected size. For a download this comes from the listing, which is
     /// authoritative enough for progress even when the service omits Content-Length.
     let byteCount: Int64
-    /// Uploads only: the Event Grid `data.api` this transfer will emit — a row badge.
-    let predictedAPI: BlobWriteAPI?
+    /// Uploads only: the event this transfer will emit — a row badge. Provider-neutral,
+    /// so the badge reads `PutBlockList` on Azure and `s3:ObjectCreated:Put` on S3
+    /// without the row knowing which cloud it is showing.
+    let predictedEvent: PredictedWriteEvent?
 
     /// Called once when the transfer reaches a terminal state. Used by the
     /// drag-to-Finder file promise, which must not signal Finder until the bytes
@@ -80,7 +82,7 @@ final class TransferItem {
         self.plan = plan
         self.provider = provider
         self.byteCount = plan.byteCount
-        self.predictedAPI = plan.predictedCommitAPI
+        self.predictedEvent = plan.predictedEvent
     }
 
     /// A download: `key` in `container` → `destinationURL` on disk.
@@ -102,7 +104,7 @@ final class TransferItem {
         self.plan = nil
         self.provider = provider
         self.byteCount = byteCount
-        self.predictedAPI = nil
+        self.predictedEvent = nil
     }
 
     var fractionCompleted: Double {

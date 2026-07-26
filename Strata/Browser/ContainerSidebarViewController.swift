@@ -51,7 +51,7 @@ final class ContainerSidebarViewController: NSViewController, NSOutlineViewDataS
     var onDropFiles: (([URL], Favorite) -> Void)?
     /// The account currently connected, so dragged-in folders can be attributed and
     /// drops onto other accounts' favorites refused.
-    var currentAccount: String?
+    var currentAccount: ProviderAccount?
 
     private let outlineView = SidebarOutlineView()
     private let scrollView = NSScrollView()

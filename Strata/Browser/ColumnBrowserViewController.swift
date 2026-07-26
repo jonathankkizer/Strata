@@ -625,7 +625,7 @@ final class ColumnBrowserViewController: NSViewController {
         col.makeLocationDrag = { [weak self] object in
             guard let self, let provider = self.provider else { return nil }
             return LocationDrag(
-                account: provider.displayName,
+                account: provider.account,
                 location: BrowserLocation(container: location.container, prefix: object.key)
             ).pasteboardItem()
         }

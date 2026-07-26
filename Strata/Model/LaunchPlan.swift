@@ -15,10 +15,10 @@ enum LaunchPlan: Equatable {
     /// and a launcher stacked in front of it would just be in the way.
     static func decide(
         reconnectOnLaunch: Bool,
-        lastAccount: String?,
+        lastAccount: ProviderAccount?,
         showWelcomeOnLaunch: Bool
     ) -> LaunchPlan {
-        let hasAccount = !(lastAccount ?? "").isEmpty
+        let hasAccount = !(lastAccount?.isEmpty ?? true)
         if reconnectOnLaunch && hasAccount { return .reconnectingBrowser }
         return showWelcomeOnLaunch ? .welcome : .emptyBrowser
     }

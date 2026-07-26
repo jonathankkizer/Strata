@@ -103,7 +103,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
             title: "No Account Connected",
             subtitle: "Connect to an Azure storage account to browse your containers and blobs.",
             actionTitle: "Connect\u{2026}",
-            action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:))
+            action: #selector(BrowserSplitViewController.connectStorageAccount(_:))
         )
     }
 
@@ -562,7 +562,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         let item = items[row]
         guard !item.isPrefix else {
             return LocationDrag(
-                account: provider.displayName,
+                account: provider.account,
                 location: BrowserLocation(container: location.container, prefix: item.key)
             ).pasteboardItem()
         }

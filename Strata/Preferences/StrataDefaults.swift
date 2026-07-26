@@ -90,13 +90,38 @@ enum StrataDefaults {
         set { UserDefaults.standard.set(!newValue, forKey: reconnectOnLaunchKey) }
     }
 
-    private static let lastAccountKey = "LastAccount"
+    /// Pre-S3 key: a bare Azure storage account name. Still read, never written.
+    private static let legacyLastAccountKey = "LastAccount"
+    private static let lastAccountKey = "LastProviderAccount"
 
-    /// The last storage account connected to. Only a name — credentials stay in the
-    /// `az` CLI's keychain, which is the whole point of piggybacking it.
-    static var lastAccount: String? {
-        get { UserDefaults.standard.string(forKey: lastAccountKey) }
-        set { UserDefaults.standard.set(newValue, forKey: lastAccountKey) }
+    /// The last account connected to — which cloud as well as which name. Only
+    /// identity is stored; credentials stay in the `az`/`aws` CLIs' own keychains and
+    /// caches, which is the whole point of piggybacking them.
+    static var lastAccount: ProviderAccount? {
+        get {
+            if let data = UserDefaults.standard.data(forKey: lastAccountKey),
+               let decoded = try? JSONDecoder().decode(ProviderAccount.self, from: data) {
+                return decoded
+            }
+            // Written before S3 support, so it can only have been Azure.
+            if let legacy = UserDefaults.standard.string(forKey: legacyLastAccountKey), !legacy.isEmpty {
+                return .azure(legacy)
+            }
+            return nil
+        }
+        set {
+            guard let newValue else {
+                UserDefaults.standard.removeObject(forKey: lastAccountKey)
+                UserDefaults.standard.removeObject(forKey: legacyLastAccountKey)
+                return
+            }
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: lastAccountKey)
+            }
+            // Drop the legacy value once it has been superseded, so a later read can't
+            // resurrect a stale Azure account after the user moved to S3.
+            UserDefaults.standard.removeObject(forKey: legacyLastAccountKey)
+        }
     }
 
     private static let lastContainerKey = "LastContainer"

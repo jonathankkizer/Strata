@@ -11,12 +11,12 @@ extension NSPasteboard.PasteboardType {
 /// an existing favorite — which favorite, so a drop inside the Favorites section
 /// reorders instead of adding a duplicate.
 struct LocationDrag: Codable, Sendable, Equatable {
-    var account: String
+    var account: ProviderAccount
     var container: String
     var prefix: String
     var favoriteID: UUID?
 
-    init(account: String, location: BrowserLocation, favoriteID: UUID? = nil) {
+    init(account: ProviderAccount, location: BrowserLocation, favoriteID: UUID? = nil) {
         self.account = account
         self.container = location.container
         self.prefix = location.prefix
