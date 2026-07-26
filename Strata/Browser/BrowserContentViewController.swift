@@ -69,6 +69,12 @@ final class BrowserContentViewController: NSViewController {
         mode == .list ? list.selectedRowScreenRect : columns.selectedRowScreenRect
     }
 
+    /// True while the current location change is the columns view moving focus
+    /// between already-open columns, rather than a navigation somewhere new.
+    var isFocusMove: Bool {
+        mode == .columns && columns.isFocusMove
+    }
+
     /// Replays a key event into the active surface, so arrow keys keep moving the
     /// selection while the Quick Look panel holds keyboard focus.
     func forwardKeyDown(_ event: NSEvent) {
