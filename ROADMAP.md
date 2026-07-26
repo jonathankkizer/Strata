@@ -89,6 +89,10 @@ These are the functional gaps; several Finder shortcuts are blocked on them.
   needs a human at a Mac — it cannot be verified headlessly.
 
 ### Distribution
-- **Developer ID signing + notarization**: the tag-triggered release workflow is
-  wired, but needs the repo secrets configured and a signing identity. Local builds
-  are ad-hoc ("Sign to Run Locally").
+- **Developer ID signing + notarization**: the tag-triggered release workflow derives
+  its version from the tag and runs the tests before touching the certificate. All
+  that is left is running `scripts/setup-release-secrets.sh` from a Mac that holds
+  the Developer ID `.p12`. Local builds remain ad-hoc ("Sign to Run Locally").
+- **Updates**: `README.md` promises Sparkle and nothing is implemented. Note that
+  release assets on a private repo need an authenticated download, so an update
+  check would need the repo made public, the appcast hosted elsewhere, or a token.

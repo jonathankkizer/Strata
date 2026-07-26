@@ -78,12 +78,38 @@ Shipping requires a Developer ID certificate, then re-enabling hardened runtime
 and running notarization/stapling. Those settings are called out in
 `project.pbxproj` (`ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME`).
 
-Release + notarization is automated in `.github/workflows/release.yml` (tag-triggered
-on `v*`), adapted from the Lineage project. It imports a Developer ID cert, builds
-Release with hardened runtime (`--options=runtime`), builds a DMG, notarizes via
-`notarytool --wait`, staples, and publishes a GitHub Release. Required repo secrets:
-`BUILD_CERTIFICATE_BASE64`, `P12_PASSWORD`, `KEYCHAIN_PASSWORD`, `SIGNING_IDENTITY`,
-`APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`.
+### Continuous integration
+
+`.github/workflows/ci.yml` builds and tests every pull request and every push to
+`main`. It runs on `macos-26` and must: `MACOSX_DEPLOYMENT_TARGET` is 26.0 and the
+test bundle is hosted by the app, so on an older runner the app can't launch and the
+tests can't run — even though the build itself would succeed.
+
+### Releasing
+
+`.github/workflows/release.yml` is tag-triggered on `v*`. It runs the tests, imports
+a Developer ID cert, builds Release with hardened runtime (`--options=runtime`),
+makes a DMG, notarizes via `notarytool --wait`, staples, and publishes a GitHub
+Release. The version comes from the tag — `v0.3.0` builds `MARKETING_VERSION=0.3.0`
+— so there is no version to remember to bump.
+
+One-time setup, from a Mac holding the Developer ID certificate:
+
+```sh
+./scripts/setup-release-secrets.sh /path/to/DeveloperID.p12
+```
+
+That sets the seven repo secrets the workflow reads: `BUILD_CERTIFICATE_BASE64`,
+`P12_PASSWORD`, `KEYCHAIN_PASSWORD`, `SIGNING_IDENTITY`, `APPLE_ID`,
+`APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`. Then:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+If notarization fails with `HTTP 403 — A required agreement is missing or has
+expired`, that is an unsigned Apple Developer Program agreement, not a workflow
+problem: accept it at developer.apple.com and re-tag.
 
 ## The differentiator, already modeled
 
