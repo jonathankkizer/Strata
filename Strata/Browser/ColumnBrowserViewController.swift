@@ -5,7 +5,7 @@ import AppKit
 /// One column in the Miller columns browser: a fixed-width pane listing the
 /// folders and blobs at a single prefix.
 @MainActor
-private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
 
     let location: BrowserLocation
     let containerView: NSView
@@ -20,12 +20,16 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
 
     /// Called when the selection changes (folder or blob, or nil on deselect).
     var onSelectionChange: ((StorageObject?) -> Void)?
-    /// ⌘↓ / → — enter the selected folder's child column.
+    /// → — enter the selected folder's child column.
     var onEnter: (() -> Void)?
+    /// ⌘↓ — open the selection: enter a folder, or download a blob.
+    var onOpen: (() -> Void)?
     /// ← — move focus to the parent column.
     var onExit: (() -> Void)?
     /// Resolves an object to its shareable URL (provider-supplied), for Copy URL.
     var objectURL: ((StorageObject) -> URL?)?
+    /// Builds the drag-out file promise for an object (provider-supplied).
+    var makePromise: ((StorageObject) -> BlobFilePromiseProvider?)?
 
     /// Make this column's table the first responder (used by ←/→ navigation).
     func focus() {
@@ -71,22 +75,35 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.dataSource = self
         tableView.delegate = self
         tableView.focusRingType = .none
-        tableView.onCommandDown = { [weak self] in self?.onEnter?() }
+        tableView.onCommandDown = { [weak self] in self?.onOpen?() }
         tableView.onArrowRight = { [weak self] in self?.onEnter?() }
         tableView.onArrowLeft = { [weak self] in self?.onExit?() }
 
+        // Drag blobs out to Finder as file promises, same as the list surface.
+        tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
+        tableView.setDraggingSourceOperationMask([], forLocal: true)
+        tableView.setAccessibilityLabel("Objects")
+
         let menu = NSMenu()
+        let download = NSMenuItem(title: "Download", action: #selector(BrowserSplitViewController.downloadSelection(_:)), keyEquivalent: "")
+        download.target = nil   // routed via the responder chain
+        let downloadTo = NSMenuItem(title: "Download To\u{2026}", action: #selector(BrowserSplitViewController.downloadSelectionTo(_:)), keyEquivalent: "")
+        downloadTo.target = nil
         let copyName = NSMenuItem(title: "Copy Name", action: #selector(copyName(_:)), keyEquivalent: "")
         copyName.target = self
         let copyPath = NSMenuItem(title: "Copy Path", action: #selector(copyPath(_:)), keyEquivalent: "")
         copyPath.target = self
         let copyURL = NSMenuItem(title: "Copy URL", action: #selector(copyURL(_:)), keyEquivalent: "")
         copyURL.target = self
+        menu.addItem(download)
+        menu.addItem(downloadTo)
+        menu.addItem(.separator())
         menu.addItem(copyName)
         menu.addItem(copyPath)
         menu.addItem(copyURL)
         menu.addItem(.separator())
         menu.addItem(SortMenu.makeItem(shortcuts: false))
+        menu.delegate = self
         tableView.menu = menu
 
         scrollView.documentView = tableView
@@ -218,6 +235,29 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         onSelectionChange?(selectedObject)
+    }
+
+    /// Type-to-select, matching the list surface and every native Mac list.
+    func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
+        guard row < items.count else { return nil }
+        return displayName(for: items[row])
+    }
+
+    /// Blobs drag out as file promises; folders aren't draggable yet.
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        guard row < items.count else { return nil }
+        return makePromise?(items[row])
+    }
+
+    // MARK: - NSMenuDelegate
+
+    /// Follow Finder: right-clicking an unselected row selects it first, so the
+    /// menu — including the responder-chain Download commands — acts on what the
+    /// user actually clicked.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let clicked = tableView.clickedRow
+        guard clicked >= 0, tableView.selectedRow != clicked else { return }
+        tableView.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
     }
 
     // MARK: - Copy Name / Copy Path (right-click, Finder parity)
@@ -464,10 +504,15 @@ final class ColumnBrowserViewController: NSViewController {
         outerScrollView.isHidden = true
     }
 
-    /// Open (enter) the deepest selected folder — the ⌘O menu path.
+    /// Open the deepest selection — ⌘O / ⌘↓ / →. A folder enters its column; a blob
+    /// downloads, matching the list surface.
     func openSelection() {
         guard let idx = columns.lastIndex(where: { $0.selectedObject != nil }) else { return }
-        enterChild(of: columns[idx])
+        if columns[idx].selectedObject?.isPrefix == true {
+            enterChild(of: columns[idx])
+        } else {
+            NSApp.sendAction(#selector(BrowserSplitViewController.downloadSelection(_:)), to: nil, from: self)
+        }
     }
 
     // MARK: - Column management
@@ -489,6 +534,7 @@ final class ColumnBrowserViewController: NSViewController {
             guard let self, let col else { return }
             self.enterChild(of: col)
         }
+        col.onOpen = { [weak self] in self?.openSelection() }
         col.onExit = { [weak self, weak col] in
             guard let self, let col else { return }
             self.focusParent(of: col)
@@ -497,7 +543,34 @@ final class ColumnBrowserViewController: NSViewController {
             guard let self, let provider = self.provider else { return nil }
             return provider.objectURL(forKey: object.key, in: StorageContainer(name: location.container))
         }
+        col.makePromise = { [weak self] object in
+            guard let self, let provider = self.provider else { return nil }
+            return BlobFilePromiseProvider.make(
+                for: object,
+                in: StorageContainer(name: location.container),
+                provider: provider
+            )
+        }
         return col
+    }
+
+    // MARK: - Selection (for Download)
+
+    /// The deepest selected column, if any — the one the user is acting on.
+    private var activeColumn: BrowseColumn? {
+        columns.last(where: { $0.selectedObject != nil })
+    }
+
+    /// The real blobs in the current selection. Columns are single-select, so this is
+    /// at most one object.
+    var downloadableSelection: [StorageObject] {
+        guard let object = activeColumn?.selectedObject, !object.isPrefix else { return [] }
+        return [object]
+    }
+
+    /// The container the selection lives in.
+    var selectedContainerName: String? {
+        activeColumn?.location.container ?? location?.container
     }
 
     /// Cmd+C: copy the deepest selected object with a path (plain text) and, for a

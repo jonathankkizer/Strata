@@ -110,8 +110,20 @@ final class TransferRowView: NSView {
 
     func update(with item: TransferItem) {
         nameField.stringValue = item.fileName
+        // Uploads read "to <remote folder>", downloads "to <local folder>".
         destinationField.stringValue = item.destination
-        badgeLabel.stringValue = item.predictedAPI.rawValue
+        icon.image = NSImage(
+            systemSymbolName: item.direction == .upload ? "arrow.up.doc" : "arrow.down.doc",
+            accessibilityDescription: item.direction == .upload ? "Upload" : "Download"
+        )
+        // Only uploads emit a storage event, so only uploads carry the api badge.
+        if let api = item.predictedAPI {
+            badgeLabel.stringValue = api.rawValue
+            badgeBox.isHidden = false
+        } else {
+            badgeLabel.stringValue = ""
+            badgeBox.isHidden = true
+        }
 
         switch item.state {
         case .queued:
@@ -130,7 +142,11 @@ final class TransferRowView: NSView {
             progressBar.isHidden = true
             statusField.stringValue = "Completed · \(byteFormatter.string(fromByteCount: item.byteCount))"
             statusField.textColor = .systemGreen
-            configureAction(symbol: "checkmark.circle.fill", tint: .systemGreen, enabled: false, tooltip: nil)
+            if item.canRevealInFinder {
+                configureAction(symbol: "magnifyingglass.circle", tint: .controlAccentColor, enabled: true, tooltip: "Show in Finder")
+            } else {
+                configureAction(symbol: "checkmark.circle.fill", tint: .systemGreen, enabled: false, tooltip: nil)
+            }
         case .cancelled:
             progressBar.isHidden = true
             statusField.stringValue = "Cancelled"
@@ -142,7 +158,8 @@ final class TransferRowView: NSView {
             statusField.textColor = .systemRed
             configureAction(symbol: "arrow.clockwise.circle", tint: .controlAccentColor, enabled: true, tooltip: "Retry")
         }
-        setAccessibilityLabel("\(item.fileName), \(statusField.stringValue)")
+        let verb = item.direction == .upload ? "Upload" : "Download"
+        setAccessibilityLabel("\(verb), \(item.fileName), \(statusField.stringValue)")
     }
 
     private func configureAction(symbol: String, tint: NSColor, enabled: Bool, tooltip: String?) {

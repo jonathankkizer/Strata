@@ -132,11 +132,30 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         // Drag-and-drop upload from Finder.
         tableView.registerForDraggedTypes([.fileURL])
+        // Drag blobs out to Finder (file promises). Copy-only, and only outside the
+        // app — there is no in-app move/reorder to support.
+        tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
+        tableView.setDraggingSourceOperationMask([], forLocal: true)
 
-        // Context menu (autoenablesItems = false — we manage Copy items explicitly).
+        // Persist column widths, order, and visibility across launches.
+        tableView.autosaveName = "StrataObjectList"
+        tableView.autosaveTableColumns = true
+
+        tableView.setAccessibilityLabel("Objects")
+
+        // Context menu (autoenablesItems = false — we manage items explicitly).
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
+        // Download first: it is the primary verb for a blob, and Finder/Safari both
+        // put the acting-on-content command above the copy commands.
+        let downloadItem = NSMenuItem(title: "Download", action: #selector(BrowserSplitViewController.downloadSelection(_:)), keyEquivalent: "")
+        downloadItem.target = nil   // routed via the responder chain
+        let downloadToItem = NSMenuItem(title: "Download To\u{2026}", action: #selector(BrowserSplitViewController.downloadSelectionTo(_:)), keyEquivalent: "")
+        downloadToItem.target = nil
+        menu.addItem(downloadItem)
+        menu.addItem(downloadToItem)
+        menu.addItem(.separator())
         let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyName(_:)), keyEquivalent: "")
         copyNameItem.target = self
         let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(copyPath(_:)), keyEquivalent: "")
@@ -356,20 +375,23 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }
 
     @objc private func tableDoubleClicked(_ sender: NSTableView) {
-        descend(row: sender.clickedRow)
+        open(row: sender.clickedRow)
     }
 
-    /// Open (descend into) the selected folder — ⌘O / ⌘↓. Blob open/preview awaits
-    /// a download path.
+    /// Open the selection — ⌘O / ⌘↓ / double-click. A folder descends into it; a blob
+    /// downloads it, the way Transmit and Cyberduck treat "open" on a remote file.
     func openSelection() {
-        descend(row: tableView.selectedRow)
+        open(row: tableView.selectedRow)
     }
 
-    private func descend(row: Int) {
+    private func open(row: Int) {
         guard row >= 0, row < items.count, let location else { return }
         let item = items[row]
-        guard item.isPrefix else { return }
-        self.location = BrowserLocation(container: location.container, prefix: item.key)
+        if item.isPrefix {
+            self.location = BrowserLocation(container: location.container, prefix: item.key)
+        } else {
+            NSApp.sendAction(#selector(BrowserSplitViewController.downloadSelection(_:)), to: nil, from: self)
+        }
     }
 
     // MARK: - Enclosing-folder navigation
@@ -508,6 +530,32 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         return cell
     }
 
+    // MARK: - Type-to-select
+
+    /// Lets the user type a few characters to jump to a row, the way every native
+    /// Mac list works. Without this the table has nothing to match against, because
+    /// the cells are view-based.
+    func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
+        guard row < items.count else { return nil }
+        // Match on the name column only; matching a size or date would be noise.
+        guard tableColumn == nil || tableColumn?.identifier.rawValue == Column.name.rawValue else { return nil }
+        return displayName(for: items[row])
+    }
+
+    // MARK: - Drag out (file promises)
+
+    /// Blobs drag out to Finder as file promises — the download happens on drop.
+    /// Folders return nil: recursive prefix download isn't built, and promising a
+    /// directory we can't produce would be worse than not offering the drag.
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        guard row < items.count, let location, let provider else { return nil }
+        return BlobFilePromiseProvider.make(
+            for: items[row],
+            in: StorageContainer(name: location.container),
+            provider: provider
+        )
+    }
+
     // MARK: - Drag-and-drop upload
 
     func tableView(_ tableView: NSTableView,
@@ -580,10 +628,15 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     /// Returns the objects for the current selection, preferring clicked row when
     /// it is outside the selection (handled by menuNeedsUpdate before this runs).
-    private func selectedObjects() -> [StorageObject] {
+    func selectedObjects() -> [StorageObject] {
         tableView.selectedRowIndexes.compactMap { idx in
             idx < items.count ? items[idx] : nil
         }
+    }
+
+    /// The real blobs (not folders) in the current selection — what Download acts on.
+    var downloadableSelection: [StorageObject] {
+        selectedObjects().filter { !$0.isPrefix }
     }
 
     // MARK: - Edit ▸ Copy (Cmd+C)
@@ -630,7 +683,9 @@ extension ObjectListViewController: NSMenuDelegate {
             switch item.action {
             case #selector(copyName(_:)), #selector(copyPath(_:)):
                 item.isEnabled = hasTarget
-            case #selector(copyURL(_:)):
+            case #selector(copyURL(_:)),
+                 #selector(BrowserSplitViewController.downloadSelection(_:)),
+                 #selector(BrowserSplitViewController.downloadSelectionTo(_:)):
                 item.isEnabled = hasBlobTarget
             default:
                 break

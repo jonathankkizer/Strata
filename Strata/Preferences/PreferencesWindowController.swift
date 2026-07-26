@@ -112,34 +112,121 @@ extension PreferencesWindowController: NSToolbarDelegate {
 
 private final class GeneralPreferencesViewController: NSViewController {
 
+    private let contentWidth: CGFloat = 430
+
+    /// Pop-up listing the current download folder plus an "Other…" escape, the same
+    /// shape as Safari's "File download location".
+    private let downloadLocationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+
     override func loadView() {
+        let root = NSView()
+        let uploads = makeUploadsBox()
+        let downloads = makeDownloadsBox()
+
+        let stack = NSStackView(views: [uploads, downloads])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 16
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
+            uploads.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            downloads.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        view = root
+
+        preferredContentSize = NSSize(width: 520, height: 330)
+    }
+
+    // MARK: - Uploads
+
+    private func makeUploadsBox() -> NSBox {
         let checkbox = NSButton(
             checkboxWithTitle: "Ask before uploading",
             target: self,
             action: #selector(askBeforeUploadingChanged(_:))
         )
         checkbox.state = StrataDefaults.askBeforeUploading ? .on : .off
-        checkbox.translatesAutoresizingMaskIntoConstraints = false
 
-        let description = NSTextField(wrappingLabelWithString:
+        let description = explanatoryLabel(
             "Shows each file's predicted Event Grid event before the upload starts. " +
             "When off, uploads begin immediately and predictions appear in the Transfers list."
         )
-        description.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        description.textColor = .secondaryLabelColor
-        description.translatesAutoresizingMaskIntoConstraints = false
-        description.preferredMaxLayoutWidth = 430
-        description.widthAnchor.constraint(equalToConstant: 430).isActive = true
+        return makeBox(titled: "Uploads", content: [checkbox, description])
+    }
 
-        let group = NSStackView(views: [checkbox, description])
+    // MARK: - Downloads
+
+    private func makeDownloadsBox() -> NSBox {
+        let locationLabel = NSTextField(labelWithString: "Save downloaded files to:")
+
+        downloadLocationPopUp.target = self
+        downloadLocationPopUp.action = #selector(downloadLocationChanged(_:))
+        rebuildDownloadLocationMenu()
+
+        let locationRow = NSStackView(views: [locationLabel, downloadLocationPopUp])
+        locationRow.orientation = .horizontal
+        locationRow.spacing = 8
+        locationRow.alignment = .firstBaseline
+
+        let askCheckbox = NSButton(
+            checkboxWithTitle: "Ask for each download",
+            target: self,
+            action: #selector(askWhereToSaveChanged(_:))
+        )
+        askCheckbox.state = StrataDefaults.askWhereToSaveDownloads ? .on : .off
+
+        let description = explanatoryLabel(
+            "File ▸ Download saves here without asking. Download To… always asks, " +
+            "and dragging a blob to the Finder downloads it wherever you drop it."
+        )
+        return makeBox(titled: "Downloads", content: [locationRow, askCheckbox, description])
+    }
+
+    /// Shows the folder with its real Finder icon, plus the "Other…" chooser.
+    private func rebuildDownloadLocationMenu() {
+        let directory = StrataDefaults.downloadDirectory
+        let menu = NSMenu()
+
+        let current = NSMenuItem(title: directory.lastPathComponent, action: nil, keyEquivalent: "")
+        let icon = NSWorkspace.shared.icon(forFile: directory.path)
+        icon.size = NSSize(width: 16, height: 16)
+        current.image = icon
+        current.representedObject = directory
+        menu.addItem(current)
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Other\u{2026}", action: nil, keyEquivalent: "")
+
+        downloadLocationPopUp.menu = menu
+        downloadLocationPopUp.selectItem(at: 0)
+    }
+
+    // MARK: - Shared chrome
+
+    private func explanatoryLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        label.preferredMaxLayoutWidth = contentWidth
+        label.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
+        return label
+    }
+
+    /// Grouped box, System Settings style, so each setting reads as intentional.
+    private func makeBox(titled title: String, content: [NSView]) -> NSBox {
+        let group = NSStackView(views: content)
         group.orientation = .vertical
         group.alignment = .leading
         group.spacing = 6
         group.translatesAutoresizingMaskIntoConstraints = false
 
-        // Grouped box, System Settings style, so the setting reads as intentional.
         let box = NSBox()
-        box.title = "Uploads"
+        box.title = title
         box.translatesAutoresizingMaskIntoConstraints = false
         let boxContent = box.contentView ?? NSView()
         boxContent.addSubview(group)
@@ -149,21 +236,38 @@ private final class GeneralPreferencesViewController: NSViewController {
             group.leadingAnchor.constraint(equalTo: boxContent.leadingAnchor, constant: 8),
             group.trailingAnchor.constraint(equalTo: boxContent.trailingAnchor, constant: -8),
         ])
-
-        let root = NSView()
-        root.addSubview(box)
-        NSLayoutConstraint.activate([
-            box.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            box.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
-            box.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            box.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
-        ])
-        view = root
-
-        preferredContentSize = NSSize(width: 520, height: 180)
+        return box
     }
+
+    // MARK: - Actions
 
     @objc private func askBeforeUploadingChanged(_ sender: NSButton) {
         StrataDefaults.askBeforeUploading = sender.state == .on
+    }
+
+    @objc private func askWhereToSaveChanged(_ sender: NSButton) {
+        StrataDefaults.askWhereToSaveDownloads = sender.state == .on
+    }
+
+    @objc private func downloadLocationChanged(_ sender: NSPopUpButton) {
+        // Index 0 is the current folder; the last item is "Other…".
+        guard sender.indexOfSelectedItem != 0 else { return }
+        guard let window = view.window else { return }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Choose where downloaded files are saved"
+        panel.directoryURL = StrataDefaults.downloadDirectory
+        panel.beginSheetModal(for: window) { [weak self] response in
+            if response == .OK, let url = panel.url {
+                StrataDefaults.downloadDirectory = url
+            }
+            // Rebuild either way, so cancelling restores the previous selection.
+            self?.rebuildDownloadLocationMenu()
+        }
     }
 }

@@ -32,6 +32,13 @@ enum MainMenu {
             let settings = menu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showPreferences(_:)), keyEquivalent: ",")
             settings.target = target
             menu.addItem(.separator())
+            // Standard App-menu Services submenu; AppKit populates it from the
+            // system's registered services for whatever is on the pasteboard.
+            let services = menu.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
+            let servicesMenu = NSMenu(title: "Services")
+            services.submenu = servicesMenu
+            NSApp.servicesMenu = servicesMenu
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Hide Strata", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
             let hideOthers = menu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
             hideOthers.keyEquivalentModifierMask = [.command, .option]
@@ -55,7 +62,14 @@ enum MainMenu {
             // window's BrowserSplitViewController. Cmd+K mirrors Finder's
             // "Connect to Server".
             menu.addItem(withTitle: "Connect to Azure Storage Account…", action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:)), keyEquivalent: "k")
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Upload…", action: #selector(BrowserSplitViewController.uploadFiles(_:)), keyEquivalent: "u")
+            // Safari's pairing: plain Download goes to the download folder, the
+            // "To…" variant always asks. ⌘D is free here — there is nothing to
+            // duplicate, which is what Finder spends it on.
+            menu.addItem(withTitle: "Download", action: #selector(BrowserSplitViewController.downloadSelection(_:)), keyEquivalent: "d")
+            let downloadTo = menu.addItem(withTitle: "Download To…", action: #selector(BrowserSplitViewController.downloadSelectionTo(_:)), keyEquivalent: "d")
+            downloadTo.keyEquivalentModifierMask = [.command, .shift]
             menu.addItem(.separator())
             menu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         }

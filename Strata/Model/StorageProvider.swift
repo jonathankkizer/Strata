@@ -29,6 +29,15 @@ protocol StorageProvider: Sendable {
     /// it before the upload happens. `onProgress` reports cumulative bytes sent and
     /// the total; it may be called from a background queue.
     func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
+
+    /// Streams `key` to `destinationURL`, replacing anything already there. Memory
+    /// stays bounded regardless of blob size — the bytes go to disk, never through a
+    /// `Data` in RAM. `onProgress` reports cumulative bytes received and the expected
+    /// total (which is `NSURLSessionTransferSizeUnknown` / -1 if the service omits a
+    /// length); it may be called from a background queue.
+    ///
+    /// Reads emit no storage event, so there is no `plan` analog here.
+    func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
 }
 
 enum StorageProviderError: Error, Sendable {

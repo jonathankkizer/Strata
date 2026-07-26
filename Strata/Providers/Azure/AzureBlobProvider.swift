@@ -54,6 +54,10 @@ final class AzureBlobProvider: StorageProvider {
         return url
     }
 
+    func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+        try await client.downloadBlob(container: container.name, key: key, to: destinationURL, onProgress: onProgress)
+    }
+
     func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         // The plan's predicted operation is the source of truth so the emitted
         // event matches what the UI showed the user before they confirmed.

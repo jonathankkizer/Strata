@@ -48,6 +48,22 @@ final class BrowserContentViewController: NSViewController {
         didSet { list.onDropFiles = onDropFiles }
     }
 
+    /// Fired when the browse location changes on the active surface, so the window
+    /// title can track it the way a Finder window does.
+    var onLocationChange: ((BrowserLocation?) -> Void)?
+
+    // MARK: - Selection (shared by the Download commands)
+
+    /// The real blobs (not folders) selected on the active surface.
+    var downloadableSelection: [StorageObject] {
+        mode == .list ? list.downloadableSelection : columns.downloadableSelection
+    }
+
+    /// The container the current selection lives in.
+    var selectedContainerName: String? {
+        mode == .list ? list.location?.container : columns.selectedContainerName
+    }
+
     // MARK: - Mode
 
     var mode: BrowseMode = .list {
@@ -161,9 +177,10 @@ final class BrowserContentViewController: NSViewController {
             pathBar.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // Both surfaces report location changes to the one shared path bar.
-        list.onLocationChange = { [weak self] location in self?.updatePathBar(for: location) }
-        columns.onLocationChange = { [weak self] location in self?.updatePathBar(for: location) }
+        // Both surfaces report location changes to the one shared path bar, and on to
+        // the coordinator so the window title follows.
+        list.onLocationChange = { [weak self] location in self?.handleLocationChange(location) }
+        columns.onLocationChange = { [weak self] location in self?.handleLocationChange(location) }
 
         // A list header click updates the shared sort so the columns view + menus follow.
         list.onSortChange = { [weak self] newSort in self?.handleListSortChange(newSort) }
@@ -180,6 +197,7 @@ final class BrowserContentViewController: NSViewController {
         pathBar.action = #selector(pathBarClicked(_:))
         pathBar.focusRingType = .none
         pathBar.font = .systemFont(ofSize: 11)
+        pathBar.setAccessibilityLabel("Path")
         pathBar.translatesAutoresizingMaskIntoConstraints = false
 
         let menu = NSMenu()
@@ -193,6 +211,13 @@ final class BrowserContentViewController: NSViewController {
     }
 
     // MARK: - Path bar
+
+    /// Fans one surface's location change out to the shared chrome: the path bar
+    /// here, and the window title via the coordinator.
+    private func handleLocationChange(_ location: BrowserLocation?) {
+        updatePathBar(for: location)
+        onLocationChange?(location)
+    }
 
     private func updatePathBar(for location: BrowserLocation?) {
         guard let location else {

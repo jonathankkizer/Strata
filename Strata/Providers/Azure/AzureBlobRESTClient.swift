@@ -43,8 +43,9 @@ private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @u
 
 /// A thin, hand-rolled Blob REST client over URLSession. Hand-rolling (rather than
 /// an SDK) is deliberate: the app controls exactly which REST operation each call
-/// uses, which is what makes deterministic Event Grid prediction possible. Reads
-/// only — List Containers / List Blobs — for the first cut.
+/// uses, which is what makes deterministic Event Grid prediction possible. Covers
+/// List Containers / List Blobs, Get Blob Properties, Get Blob, and the two write
+/// paths (Put Blob, Put Block + Put Block List).
 struct AzureBlobRESTClient: Sendable {
 
     let endpoint: AzureStorageEndpoint
@@ -53,6 +54,9 @@ struct AzureBlobRESTClient: Sendable {
     /// full modern property set (AccessTier, etc.) comes back.
     let apiVersion: String
     let session: URLSession
+    /// Downloads need a session we own to get byte progress, so they don't go through
+    /// `session` — see `DownloadSession`.
+    let downloader: DownloadSession
 
     /// Backstop against a server that never stops returning a NextMarker.
     private static let maxPages = 1000
@@ -61,12 +65,14 @@ struct AzureBlobRESTClient: Sendable {
         endpoint: AzureStorageEndpoint,
         tokenSource: any AzureTokenSource,
         apiVersion: String = "2021-12-02",
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        downloader: DownloadSession = .shared
     ) {
         self.endpoint = endpoint
         self.tokenSource = tokenSource
         self.apiVersion = apiVersion
         self.session = session
+        self.downloader = downloader
     }
 
     // MARK: - List Containers
@@ -127,6 +133,56 @@ struct AzureBlobRESTClient: Sendable {
         let url = blobURL(container: container, blobKey: blobKey)
         let (_, response) = try await perform(method: "HEAD", url: url, body: nil, extraHeaders: [:])
         return ObjectMetadata(from: response)
+    }
+
+    // MARK: - Get Blob (download)
+
+    /// Streams a blob to `destinationURL` using a URLSession *download* task, so the
+    /// bytes go straight to disk and memory stays flat regardless of blob size.
+    /// Replaces anything already at the destination. Reads emit no storage event.
+    func downloadBlob(
+        container: String,
+        key: String,
+        to destinationURL: URL,
+        onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws {
+        let url = blobURL(container: container, blobKey: key)
+        let token = try await tokenSource.token(asOf: Date())
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiVersion, forHTTPHeaderField: "x-ms-version")
+
+        let (temporaryURL, http) = try await downloader.download(request, onProgress: onProgress)
+
+        // The downloader hands us a file we own; make sure it never leaks, including
+        // on the error paths below.
+        var consumed = false
+        defer { if !consumed { try? FileManager.default.removeItem(at: temporaryURL) } }
+
+        switch http.statusCode {
+        case 200..<300:
+            break
+        case 401:
+            throw StorageProviderError.unauthorized
+        case 403:
+            throw StorageProviderError.dataPlaneForbidden(account: endpoint.account)
+        default:
+            // A failed GET still writes a body — Azure's error XML — to the temp file.
+            let body = (try? String(contentsOf: temporaryURL, encoding: .utf8)) ?? ""
+            throw AzureBlobError.httpError(status: http.statusCode, code: Self.errorCode(in: body), message: body)
+        }
+
+        // Move into place. `replaceItemAt` is atomic and handles the
+        // already-exists case; it needs the destination to exist, so fall back to a
+        // plain move when it does not.
+        let manager = FileManager.default
+        if manager.fileExists(atPath: destinationURL.path) {
+            _ = try manager.replaceItemAt(destinationURL, withItemAt: temporaryURL)
+        } else {
+            try manager.moveItem(at: temporaryURL, to: destinationURL)
+        }
+        consumed = true
     }
 
     // MARK: - Writes

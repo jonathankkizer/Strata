@@ -40,6 +40,7 @@ final class ContainerSidebarViewController: NSViewController, NSOutlineViewDataS
         outlineView.dataSource = self
         outlineView.delegate = self
         outlineView.focusRingType = .none
+        outlineView.setAccessibilityLabel("Containers")
 
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true

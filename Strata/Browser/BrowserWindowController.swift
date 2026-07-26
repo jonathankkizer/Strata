@@ -26,7 +26,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         static let transfers = NSToolbarItem.Identifier("transfers")
     }
 
-    convenience init() {
+    private static let frameAutosaveName = "StrataBrowserWindow"
+
+    /// Where the next window's top-left goes. AppKit's cascade chain: passing
+    /// `.zero` leaves the first window where it is and seeds the chain from it.
+    private static var nextCascadePoint: NSPoint?
+
+    /// - Parameter isPrimary: whether this window owns the saved frame. Only one
+    ///   window may — otherwise every window writes over the same autosave entry and
+    ///   they all reopen stacked on top of each other.
+    convenience init(isPrimary: Bool) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -35,7 +44,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         )
         window.title = "Strata"
         window.isRestorable = true
-        window.setFrameAutosaveName("StrataBrowserWindow")
         window.tabbingMode = .automatic
         window.tabbingIdentifier = "StrataBrowser"
         window.minSize = NSSize(width: 720, height: 480)
@@ -46,7 +54,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.contentViewController = splitViewController
         configureToolbar(for: window)
         observeTransferQueue()
-        if !window.setFrameUsingName("StrataBrowserWindow") { window.center() }
+
+        // Every window adopts the remembered size; only the primary keeps writing
+        // it back. Additional windows then cascade down-right like Finder's.
+        if !window.setFrameUsingName(Self.frameAutosaveName) { window.center() }
+        if isPrimary { window.setFrameAutosaveName(Self.frameAutosaveName) }
+        Self.nextCascadePoint = window.cascadeTopLeft(from: Self.nextCascadePoint ?? .zero)
     }
 
     deinit {

@@ -49,6 +49,37 @@ enum StrataDefaults {
         }
     }
 
+    private static let downloadDirectoryKey = "DownloadDirectoryBookmark"
+
+    /// Where plain Download puts files. Stored as a security-scoped-capable bookmark
+    /// rather than a path so it survives the folder being renamed or moved, the way
+    /// a Mac app's saved location should. Falls back to ~/Downloads.
+    static var downloadDirectory: URL {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: downloadDirectoryKey) else {
+                return DownloadPlanning.defaultDirectory
+            }
+            var stale = false
+            guard let url = try? URL(resolvingBookmarkData: data, options: [], relativeTo: nil, bookmarkDataIsStale: &stale) else {
+                return DownloadPlanning.defaultDirectory
+            }
+            return url
+        }
+        set {
+            guard let data = try? newValue.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) else { return }
+            UserDefaults.standard.set(data, forKey: downloadDirectoryKey)
+        }
+    }
+
+    private static let askWhereToSaveDownloadsKey = "AskWhereToSaveDownloads"
+
+    /// When true, plain Download opens a save panel instead of going straight to the
+    /// download folder — Safari's "Ask for each download". Off by default.
+    static var askWhereToSaveDownloads: Bool {
+        get { UserDefaults.standard.bool(forKey: askWhereToSaveDownloadsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: askWhereToSaveDownloadsKey) }
+    }
+
     private static let preferencesPaneKey = "PreferencesPane"
 
     /// The last-selected Preferences pane identifier, restored when the window

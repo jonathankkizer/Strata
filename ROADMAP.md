@@ -17,6 +17,9 @@ Working today (Azure Blob Storage only):
 - **Upload** (File ▸ Upload… or drag-and-drop, including folders) as streaming,
   bounded-memory transfers with a transfer queue, plus the differentiator:
   predicting the Event Grid `data.api` each write emits.
+- **Download** (File ▸ Download ⌘D / Download To… ⇧⌘D, double-click, or by dragging
+  a blob out to the Finder as a file promise), sharing the upload queue's progress,
+  cancel, and retry, with Safari-style download-location preferences.
 - **Settings** (grouped, content-sized) and a notarization-ready release workflow.
 
 ## Next steps / gaps
@@ -28,18 +31,24 @@ Working today (Azure Blob Storage only):
 
 ### Read / write operations
 These are the functional gaps; several Finder shortcuts are blocked on them.
-- **Download** — drag a blob out to Finder / double-click to download. Unlocks the
-  items below.
-- **Quick Look preview** (Space) of actual blob contents in the inspector — needs
-  the download path (today the inspector shows the type icon, Finder-style).
+- **Quick Look preview** (Space) of actual blob contents. The download path now
+  exists, so this is unblocked: fetch to a cache directory and hand the file to
+  `QLPreviewPanel`. Today the inspector shows the type icon, Finder-style.
 - **Delete** (⌘⌫) — with confirmation.
 - **Rename** (Return) — implemented as copy + delete (blob storage has no native
   rename).
 - **Metadata editing** — edit `x-ms-meta-*` and content type.
 - **Find / filter** (⌘F) — filter the current listing.
+- **Recursive folder download** — dragging a prefix out to the Finder is
+  deliberately not offered until this exists, rather than promising a directory the
+  app cannot produce.
+- **Undo** — nothing registers an undo action today. Delete and rename will need it;
+  the skill's guidance is to prefer undo over a confirmation sheet.
 
-### Sorting
-- **Persist** the sort field and direction across launches (currently per-session).
+### Transfers
+- **Pause / resume** — only cancel and retry exist. True pause needs
+  `cancel(byProducingResumeData:)`, which `DownloadSession` is already structured
+  for, plus block-level resumption on the upload side.
 
 ### Providers
 - **AWS S3 provider** — currently all stubs. The biggest functional gap; makes the
@@ -52,10 +61,15 @@ These are the functional gaps; several Finder shortcuts are blocked on them.
   emits, but whether a subscription is actually listening for it.
 
 ### Polish & preferences
-- **Drag-and-drop upload in the Columns view** (wired for the List view today).
+- **Drag-and-drop upload in the Columns view** (wired for the List view today;
+  dragging blobs *out* works in both).
 - **More Settings panes** (upload strategy, credentials, event-awareness) per
   `DESIGN.md` § Preferences.
 - **Multiple simultaneous account connections** in the sidebar.
+- **Reconnect on launch** to the last account, which is also what would make
+  restoring the last browse location meaningful.
+- **Accessibility**: the main controls carry labels, but no VoiceOver pass has been
+  run over the full browse workflow.
 
 ### Distribution
 - **Developer ID signing + notarization**: the tag-triggered release workflow is

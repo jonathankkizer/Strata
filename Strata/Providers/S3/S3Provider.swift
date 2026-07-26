@@ -33,6 +33,10 @@ final class S3Provider: StorageProvider {
         return components.url
     }
 
+    func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+        throw StorageProviderError.notImplemented
+    }
+
     func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         throw StorageProviderError.notImplemented
     }

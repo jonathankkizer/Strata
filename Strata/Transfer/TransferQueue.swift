@@ -1,9 +1,10 @@
 import Foundation
 
-/// App-wide upload queue. Runs transfers with bounded concurrency, reports real
-/// byte progress, and supports cancel and retry. Cancellation rides on structured
+/// App-wide transfer queue — uploads and downloads share one queue, one concurrency
+/// budget, and one progress ring, the way a Mac file-transfer client should. Reports
+/// real byte progress and supports cancel and retry. Cancellation rides on structured
 /// concurrency: each transfer runs in a `Task`, and cancelling it cancels the
-/// in-flight URLSession upload. MainActor-isolated; observers subscribe via
+/// in-flight URLSession task. MainActor-isolated; observers subscribe via
 /// NotificationCenter so the toolbar ring and the popover stay in sync.
 @MainActor
 final class TransferQueue {
@@ -27,15 +28,40 @@ final class TransferQueue {
         plan: UploadPlan,
         provider: any StorageProvider
     ) {
-        let item = TransferItem(
-            fileURL: fileURL,
+        enqueue(TransferItem(
+            uploadFrom: fileURL,
             key: key,
             container: container,
             destination: destination,
             contentType: contentType,
             plan: plan,
             provider: provider
+        ))
+    }
+
+    /// Enqueues a download of `object` to `destinationURL`. `onFinish` fires once the
+    /// transfer reaches a terminal state — the drag-to-Finder file promise uses it to
+    /// tell Finder the file has actually landed.
+    func enqueueDownload(
+        object: StorageObject,
+        container: StorageContainer,
+        to destinationURL: URL,
+        provider: any StorageProvider,
+        onFinish: ((Error?) -> Void)? = nil
+    ) {
+        let item = TransferItem(
+            downloadKey: object.key,
+            container: container,
+            to: destinationURL,
+            byteCount: object.size,
+            contentType: object.contentType,
+            provider: provider
         )
+        item.onFinish = onFinish
+        enqueue(item)
+    }
+
+    private func enqueue(_ item: TransferItem) {
         transfers.insert(item, at: 0)   // newest on top
         postChange()
         NotificationCenter.default.post(name: .transferQueueDidEnqueue, object: self)
@@ -97,26 +123,52 @@ final class TransferQueue {
         let total = item.byteCount
 
         item.task = Task { [weak self] in
+            // The service's own expected-total is ignored in favour of the size we
+            // already know: a download response may omit Content-Length (-1), and the
+            // staged upload path reports offsets against the whole file, not the block.
+            let progress: @Sendable (Int64, Int64) -> Void = { sent, _ in
+                Task { @MainActor in TransferQueue.shared.updateProgress(id: id, sent: sent, total: total) }
+            }
+
+            var failure: Error?
             do {
-                try await item.provider.upload(
-                    from: item.sourceURL,
-                    toKey: item.key,
-                    in: item.container,
-                    contentType: item.contentType,
-                    plan: item.plan,
-                    onProgress: { sent, _ in
-                        Task { @MainActor in TransferQueue.shared.updateProgress(id: id, sent: sent, total: total) }
-                    }
-                )
+                switch item.direction {
+                case .upload:
+                    guard let plan = item.plan else { throw StorageProviderError.notImplemented }
+                    try await item.provider.upload(
+                        from: item.localURL,
+                        toKey: item.key,
+                        in: item.container,
+                        contentType: item.contentType,
+                        plan: plan,
+                        onProgress: progress
+                    )
+                case .download:
+                    try await item.provider.download(
+                        fromKey: item.key,
+                        in: item.container,
+                        to: item.localURL,
+                        onProgress: progress
+                    )
+                }
                 item.bytesTransferred = item.byteCount
                 item.state = .completed
             } catch is CancellationError {
                 item.state = .cancelled
+                failure = CancellationError()
             } catch let error as URLError where error.code == .cancelled {
                 item.state = .cancelled
+                failure = error
             } catch {
                 item.state = .failed(Self.describe(error))
+                failure = error
             }
+
+            // Fire-once: a retry must not signal a waiting file promise twice.
+            let finish = item.onFinish
+            item.onFinish = nil
+            finish?(failure)
+
             self?.postChange()
             self?.startEligible()
         }
