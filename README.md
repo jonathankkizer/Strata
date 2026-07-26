@@ -34,8 +34,11 @@ covers the prediction/parsing/sort/naming/history/favorites logic.
   wrapped around AppKit — the framework Apple's own Mac apps use.
 - **Programmatic UI.** No XIBs or Storyboards. Easier to diff, refactor, and edit.
 - **macOS 26+.** Latest APIs, no back-compat conditionals.
-- **Non-sandboxed, Developer ID–signed + notarized** distribution (Sparkle, not
+- **Non-sandboxed, Developer ID–signed + notarized** distribution (direct, not
   the App Store) — required to piggyback existing `aws`/`az` credentials.
+  Updates are a weekly check against the GitHub Releases API that points you at
+  the release page; deliberately not Sparkle, which would mean an updater
+  framework and a background installer for a one-endpoint job.
 
 See `DESIGN.md` for the full product and architecture writeup, and
 [`ROADMAP.md`](ROADMAP.md) for the near-term backlog.

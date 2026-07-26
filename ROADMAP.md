@@ -33,6 +33,12 @@ Working today (Azure Blob Storage only):
   upload there. A favorite carries its account, so it can jump across accounts,
   reconnecting on the way.
 - **Reconnect on launch** to the last account and folder, with a Settings toggle.
+- **Welcome window** on first launch — app identity, what the `az` CLI sign-in is
+  for, and saved places to jump straight into. Suppressed when there's an account
+  to reconnect to; reopenable from Window ▸ Welcome to Strata (⇧⌘1).
+- **Check for Updates…** — a weekly (opt-in) and on-demand check against the
+  GitHub Releases API, with skip-this-version and a Settings ▸ Updates pane. Not
+  Sparkle: it reports and links, it never installs.
 - **Settings** (grouped, content-sized) and a notarization-ready release workflow.
 
 ## Next steps / gaps
@@ -93,6 +99,11 @@ These are the functional gaps; several Finder shortcuts are blocked on them.
   its version from the tag and runs the tests before touching the certificate. All
   that is left is running `scripts/setup-release-secrets.sh` from a Mac that holds
   the Developer ID `.p12`. Local builds remain ad-hoc ("Sign to Run Locally").
-- **Updates**: `README.md` promises Sparkle and nothing is implemented. Note that
-  release assets on a private repo need an authenticated download, so an update
-  check would need the repo made public, the appcast hosted elsewhere, or a token.
+- **Updates**: the check is implemented (GitHub Releases API, no Sparkle), but it
+  cannot succeed yet and knows it. Two things are outstanding, both outside the
+  code: no release has been tagged, and while the repository is **private** the
+  `releases/latest` endpoint answers 404 to an unauthenticated caller — which is
+  why `.noReleaseFound` is a first-class, non-alarming result rather than an
+  error. Making the repository public resolves both the check and the
+  authenticated-download problem for release assets (and stops private macOS
+  Actions minutes billing at the 10× multiplier).

@@ -13,7 +13,7 @@ enum MainMenu {
         mainMenu.addItem(editMenuItem())
         mainMenu.addItem(viewMenuItem())
         mainMenu.addItem(goMenuItem(favoritesMenuDelegate: favoritesMenuDelegate))
-        mainMenu.addItem(windowMenuItem())
+        mainMenu.addItem(windowMenuItem(target: target))
         mainMenu.addItem(helpMenuItem())
         return mainMenu
     }
@@ -29,6 +29,14 @@ enum MainMenu {
     private static func appMenuItem(target: AppDelegate) -> NSMenuItem {
         submenu("Strata") { menu in
             menu.addItem(withTitle: "About Strata", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+            // Directly under About, which is where every Mac app that checks for its
+            // own updates puts this (and where Sparkle's own menu item goes).
+            let checkForUpdates = menu.addItem(
+                withTitle: "Check for Updates\u{2026}",
+                action: #selector(AppDelegate.checkForUpdates(_:)),
+                keyEquivalent: ""
+            )
+            checkForUpdates.target = target
             menu.addItem(.separator())
             let settings = menu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showPreferences(_:)), keyEquivalent: ",")
             settings.target = target
@@ -145,10 +153,20 @@ enum MainMenu {
         }
     }
 
-    private static func windowMenuItem() -> NSMenuItem {
+    private static func windowMenuItem(target: AppDelegate) -> NSMenuItem {
         submenu("Window") { menu in
             menu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
             menu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+            menu.addItem(.separator())
+            // Xcode's placement and shortcut for getting the launcher back once it has
+            // been dismissed — otherwise turning off "show on launch" hides it forever.
+            let welcome = menu.addItem(
+                withTitle: "Welcome to Strata",
+                action: #selector(AppDelegate.showWelcomeWindow(_:)),
+                keyEquivalent: "1"
+            )
+            welcome.keyEquivalentModifierMask = [.command, .shift]
+            welcome.target = target
             menu.addItem(.separator())
             menu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
             NSApp.windowsMenu = menu

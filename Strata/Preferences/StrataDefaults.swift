@@ -118,6 +118,17 @@ enum StrataDefaults {
         }
     }
 
+    private static let showWelcomeOnLaunchKey = "ShowWelcomeOnLaunch"
+
+    /// Whether the Welcome window opens on launch when there's nothing to reconnect
+    /// to. On by default — its whole job is the first launch, and that's exactly the
+    /// launch with no stored preference. `UserDefaults.bool` defaults to false, so the
+    /// stored sense is inverted, the same as `reconnectOnLaunch`.
+    static var showWelcomeOnLaunch: Bool {
+        get { !UserDefaults.standard.bool(forKey: showWelcomeOnLaunchKey) }
+        set { UserDefaults.standard.set(!newValue, forKey: showWelcomeOnLaunchKey) }
+    }
+
     private static let preferencesPaneKey = "PreferencesPane"
 
     /// The last-selected Preferences pane identifier, restored when the window

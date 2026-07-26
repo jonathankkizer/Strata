@@ -7,11 +7,17 @@ import UniformTypeIdentifiers
 /// still await a download path; this is the type icon, same as Finder's list view.
 enum BlobIcon {
 
+    /// The system folder icon, for places that stand for a folder without having a
+    /// `StorageObject` in hand — a saved place, for instance.
+    static var folder: NSImage {
+        NSWorkspace.shared.icon(for: .folder)
+    }
+
     /// The Finder icon for an object. Folders get the system folder icon; blobs get
     /// the icon for their content type (or a generic document when unknown).
     static func image(for object: StorageObject) -> NSImage {
         if object.isPrefix {
-            return NSWorkspace.shared.icon(for: .folder)
+            return folder
         }
         return NSWorkspace.shared.icon(for: utType(for: object))
     }

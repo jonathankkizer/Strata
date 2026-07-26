@@ -8,6 +8,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     var onWindowClose: (() -> Void)?
 
+    /// The browse surface this window hosts. Exposed so a caller that just opened a
+    /// window can send it somewhere — the Welcome window's buttons, for instance —
+    /// without going through the responder chain before the window is even key.
+    var browser: BrowserSplitViewController { splitViewController }
+
     private let splitViewController = BrowserSplitViewController()
     private let transfersButton = TransfersToolbarButton(frame: NSRect(x: 0, y: 0, width: 40, height: 24))
     private lazy var transfersPopover: NSPopover = {
