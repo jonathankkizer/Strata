@@ -11,6 +11,8 @@ final class KeyNavTableView: NSTableView {
     var onArrowLeft: (() -> Void)?
     /// → — move into the selected folder's column (columns browser only).
     var onArrowRight: (() -> Void)?
+    /// Space — Quick Look the selection, as in the Finder.
+    var onSpace: (() -> Void)?
 
     private static let downArrow = String(UnicodeScalar(NSDownArrowFunctionKey)!)
     private static let leftArrow = String(UnicodeScalar(NSLeftArrowFunctionKey)!)
@@ -33,6 +35,12 @@ final class KeyNavTableView: NSTableView {
         }
         if flags.isEmpty, chars == Self.rightArrow, let onArrowRight {
             onArrowRight()
+            return
+        }
+        // Intercepted before super so type-select doesn't swallow it as a search
+        // character — Finder gives Space to Quick Look, not to typing.
+        if flags.isEmpty, chars == " ", let onSpace {
+            onSpace()
             return
         }
         super.keyDown(with: event)

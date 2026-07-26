@@ -64,6 +64,20 @@ final class BrowserContentViewController: NSViewController {
         mode == .list ? list.location?.container : columns.selectedContainerName
     }
 
+    /// The selected row in screen coordinates, for Quick Look's zoom animation.
+    var selectedRowScreenRect: NSRect? {
+        mode == .list ? list.selectedRowScreenRect : columns.selectedRowScreenRect
+    }
+
+    /// Replays a key event into the active surface, so arrow keys keep moving the
+    /// selection while the Quick Look panel holds keyboard focus.
+    func forwardKeyDown(_ event: NSEvent) {
+        switch mode {
+        case .list: list.forwardKeyDown(event)
+        case .columns: columns.forwardKeyDown(event)
+        }
+    }
+
     // MARK: - Mode
 
     var mode: BrowseMode = .list {

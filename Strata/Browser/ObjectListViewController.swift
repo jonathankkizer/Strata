@@ -124,6 +124,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         tableView.doubleAction = #selector(tableDoubleClicked(_:))
         tableView.target = self
         tableView.onCommandDown = { [weak self] in self?.openSelection() }
+        tableView.onSpace = { [weak self] in
+            NSApp.sendAction(#selector(BrowserSplitViewController.toggleQuickLook(_:)), to: nil, from: self)
+        }
         // Resize all columns to fit the pane width so content tracks the window
         // (and the inspector) instead of needing a horizontal scroll.
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
@@ -149,6 +152,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         menu.delegate = self
         // Download first: it is the primary verb for a blob, and Finder/Safari both
         // put the acting-on-content command above the copy commands.
+        let quickLookItem = NSMenuItem(title: "Quick Look", action: #selector(BrowserSplitViewController.toggleQuickLook(_:)), keyEquivalent: "")
+        quickLookItem.target = nil   // routed via the responder chain
+        menu.addItem(quickLookItem)
         let downloadItem = NSMenuItem(title: "Download", action: #selector(BrowserSplitViewController.downloadSelection(_:)), keyEquivalent: "")
         downloadItem.target = nil   // routed via the responder chain
         let downloadToItem = NSMenuItem(title: "Download To\u{2026}", action: #selector(BrowserSplitViewController.downloadSelectionTo(_:)), keyEquivalent: "")
@@ -639,6 +645,22 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         selectedObjects().filter { !$0.isPrefix }
     }
 
+    /// The selected row's rect in screen coordinates, so Quick Look can zoom out of
+    /// the row the way Finder does. Nil when nothing is selected or off screen.
+    var selectedRowScreenRect: NSRect? {
+        let row = tableView.selectedRow
+        guard row >= 0, let window = tableView.window else { return nil }
+        let rowRect = tableView.rect(ofRow: row)
+        guard tableView.visibleRect.intersects(rowRect) else { return nil }
+        return window.convertToScreen(tableView.convert(rowRect, to: nil))
+    }
+
+    /// Replays a key event into the table — used to keep arrow keys moving the
+    /// selection while the Quick Look panel holds keyboard focus.
+    func forwardKeyDown(_ event: NSEvent) {
+        tableView.keyDown(with: event)
+    }
+
     // MARK: - Edit ▸ Copy (Cmd+C)
 
     /// Writes the selection to the pasteboard with multiple representations so
@@ -684,6 +706,7 @@ extension ObjectListViewController: NSMenuDelegate {
             case #selector(copyName(_:)), #selector(copyPath(_:)):
                 item.isEnabled = hasTarget
             case #selector(copyURL(_:)),
+                 #selector(BrowserSplitViewController.toggleQuickLook(_:)),
                  #selector(BrowserSplitViewController.downloadSelection(_:)),
                  #selector(BrowserSplitViewController.downloadSelectionTo(_:)):
                 item.isEnabled = hasBlobTarget

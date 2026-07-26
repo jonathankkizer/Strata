@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 
 /// Hosts the container sidebar, object list, and inspector, and coordinates between
 /// them. Owns the connected provider and the Connect / Refresh / Upload / Inspector
@@ -24,6 +25,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     private var provider: (any StorageProvider)?
     private var currentContainerName: String?
     private var refreshedCompletions = Set<UUID>()
+    private let quickLook = QuickLookController()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -63,7 +65,12 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         content.onSelectionChange = { [weak self] object in
             guard let self else { return }
             self.inspector.present(object: object, provider: self.provider, containerName: self.currentContainerName)
+            // Finder keeps the open Quick Look panel following the selection.
+            self.refreshQuickLookForSelection()
         }
+
+        quickLook.sourceFrameProvider = { [weak self] in self?.content.selectedRowScreenRect }
+        quickLook.keyForwarder = { [weak self] event in self?.content.forwardKeyDown(event) }
 
         content.onDropFiles = { [weak self] urls in
             guard let self, self.provider != nil, let location = self.content.location else { return }
@@ -194,6 +201,12 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             return provider != nil && content.location != nil
         case #selector(downloadSelection(_:)), #selector(downloadSelectionTo(_:)):
             return provider != nil && !content.downloadableSelection.isEmpty
+        case #selector(toggleQuickLook(_:)):
+            if let menuItem = item as? NSMenuItem {
+                menuItem.title = quickLook.isPreviewing ? "Close Quick Look" : "Quick Look"
+            }
+            // Closing only needs the panel to be open; opening needs a blob selected.
+            return quickLook.isPreviewing || (provider != nil && !content.downloadableSelection.isEmpty)
         case #selector(toggleObjectInspector(_:)):
             if let menuItem = item as? NSMenuItem {
                 let collapsed = (splitViewItems.last?.isCollapsed ?? true)
@@ -358,6 +371,49 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         )
     }
 
+    // MARK: - Quick Look
+
+    /// Space (or ⌘Y): preview the selection, or dismiss the panel if it is already
+    /// up — the Finder's toggle.
+    @objc func toggleQuickLook(_ sender: Any?) {
+        if quickLook.isPreviewing {
+            quickLook.close()
+            return
+        }
+        guard let object = content.downloadableSelection.first,
+              let provider,
+              let containerName = content.selectedContainerName else {
+            NSSound.beep()
+            return
+        }
+        quickLook.preview(
+            object: object,
+            container: StorageContainer(name: containerName),
+            provider: provider,
+            account: accountName ?? provider.displayName,
+            openingPanel: true
+        )
+    }
+
+    /// Swap the open panel's content as the selection moves. Does nothing when the
+    /// panel is closed, so ordinary browsing never triggers a fetch.
+    private func refreshQuickLookForSelection() {
+        guard quickLook.isPreviewing else { return }
+        guard let object = content.downloadableSelection.first,
+              let provider,
+              let containerName = content.selectedContainerName else {
+            quickLook.clear()
+            return
+        }
+        quickLook.preview(
+            object: object,
+            container: StorageContainer(name: containerName),
+            provider: provider,
+            account: accountName ?? provider.displayName,
+            openingPanel: false
+        )
+    }
+
     // MARK: - Window title
 
     /// The connected account, used as the window subtitle.
@@ -444,5 +500,27 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 self.content.showMessage("Couldn’t connect to “\(account).”\n\n\(error.localizedDescription)")
             }
         }
+    }
+}
+
+// MARK: - QLPreviewPanelController
+
+/// The shared Quick Look panel finds its controller by walking the responder chain,
+/// which is why these live on the split view controller rather than on
+/// `QuickLookController` — the panel would never find that object.
+extension BrowserSplitViewController {
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        true
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = quickLook
+        panel.delegate = quickLook
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = nil
+        panel.delegate = nil
     }
 }

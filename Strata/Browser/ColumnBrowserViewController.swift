@@ -24,6 +24,8 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     var onEnter: (() -> Void)?
     /// ⌘↓ — open the selection: enter a folder, or download a blob.
     var onOpen: (() -> Void)?
+    /// Space — Quick Look the selection.
+    var onSpace: (() -> Void)?
     /// ← — move focus to the parent column.
     var onExit: (() -> Void)?
     /// Resolves an object to its shareable URL (provider-supplied), for Copy URL.
@@ -38,6 +40,21 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
 
     var isTableFirstResponder: Bool {
         containerView.window?.firstResponder === tableView
+    }
+
+    /// The selected row in screen coordinates, for Quick Look's zoom animation.
+    var selectedRowScreenRect: NSRect? {
+        let row = tableView.selectedRow
+        guard row >= 0, let window = tableView.window else { return nil }
+        let rowRect = tableView.rect(ofRow: row)
+        guard tableView.visibleRect.intersects(rowRect) else { return nil }
+        return window.convertToScreen(tableView.convert(rowRect, to: nil))
+    }
+
+    /// Replays a key event into the table, so arrow keys keep working while the
+    /// Quick Look panel has keyboard focus.
+    func forwardKeyDown(_ event: NSEvent) {
+        tableView.keyDown(with: event)
     }
 
     var selectedObject: StorageObject? {
@@ -78,6 +95,7 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.onCommandDown = { [weak self] in self?.onOpen?() }
         tableView.onArrowRight = { [weak self] in self?.onEnter?() }
         tableView.onArrowLeft = { [weak self] in self?.onExit?() }
+        tableView.onSpace = { [weak self] in self?.onSpace?() }
 
         // Drag blobs out to Finder as file promises, same as the list surface.
         tableView.setDraggingSourceOperationMask(.copy, forLocal: false)
@@ -85,6 +103,8 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.setAccessibilityLabel("Objects")
 
         let menu = NSMenu()
+        let quickLook = NSMenuItem(title: "Quick Look", action: #selector(BrowserSplitViewController.toggleQuickLook(_:)), keyEquivalent: "")
+        quickLook.target = nil   // routed via the responder chain
         let download = NSMenuItem(title: "Download", action: #selector(BrowserSplitViewController.downloadSelection(_:)), keyEquivalent: "")
         download.target = nil   // routed via the responder chain
         let downloadTo = NSMenuItem(title: "Download To\u{2026}", action: #selector(BrowserSplitViewController.downloadSelectionTo(_:)), keyEquivalent: "")
@@ -95,6 +115,7 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         copyPath.target = self
         let copyURL = NSMenuItem(title: "Copy URL", action: #selector(copyURL(_:)), keyEquivalent: "")
         copyURL.target = self
+        menu.addItem(quickLook)
         menu.addItem(download)
         menu.addItem(downloadTo)
         menu.addItem(.separator())
@@ -535,6 +556,9 @@ final class ColumnBrowserViewController: NSViewController {
             self.enterChild(of: col)
         }
         col.onOpen = { [weak self] in self?.openSelection() }
+        col.onSpace = { [weak self] in
+            NSApp.sendAction(#selector(BrowserSplitViewController.toggleQuickLook(_:)), to: nil, from: self)
+        }
         col.onExit = { [weak self, weak col] in
             guard let self, let col else { return }
             self.focusParent(of: col)
@@ -571,6 +595,17 @@ final class ColumnBrowserViewController: NSViewController {
     /// The container the selection lives in.
     var selectedContainerName: String? {
         activeColumn?.location.container ?? location?.container
+    }
+
+    /// The selected row in screen coordinates, for Quick Look's zoom animation.
+    var selectedRowScreenRect: NSRect? {
+        activeColumn?.selectedRowScreenRect
+    }
+
+    /// Replays a key event into the focused column's table.
+    func forwardKeyDown(_ event: NSEvent) {
+        let target = columns.first(where: { $0.isTableFirstResponder }) ?? activeColumn
+        target?.forwardKeyDown(event)
     }
 
     /// Cmd+C: copy the deepest selected object with a path (plain text) and, for a

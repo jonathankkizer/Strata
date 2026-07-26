@@ -57,6 +57,9 @@ enum MainMenu {
             menu.addItem(.separator())
             // Finder convention: ⌘O opens (descends into) the selected folder.
             menu.addItem(withTitle: "Open", action: #selector(BrowserSplitViewController.openSelection(_:)), keyEquivalent: "o")
+            // Finder's Quick Look shortcut. Space does the same thing from the
+            // browse surfaces; the menu item is what makes it discoverable.
+            menu.addItem(withTitle: "Quick Look", action: #selector(BrowserSplitViewController.toggleQuickLook(_:)), keyEquivalent: "y")
             menu.addItem(.separator())
             // Targets nil so it routes through the responder chain to the key
             // window's BrowserSplitViewController. Cmd+K mirrors Finder's

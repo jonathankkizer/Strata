@@ -20,6 +20,9 @@ Working today (Azure Blob Storage only):
 - **Download** (File ▸ Download ⌘D / Download To… ⇧⌘D, double-click, or by dragging
   a blob out to the Finder as a file promise), sharing the upload queue's progress,
   cancel, and retry, with Safari-style download-location preferences.
+- **Quick Look** (Space or ⌘Y) of real blob contents, fetched into a versioned
+  preview cache, with the panel following the selection as you arrow through a
+  listing.
 - **Settings** (grouped, content-sized) and a notarization-ready release workflow.
 
 ## Next steps / gaps
@@ -31,9 +34,6 @@ Working today (Azure Blob Storage only):
 
 ### Read / write operations
 These are the functional gaps; several Finder shortcuts are blocked on them.
-- **Quick Look preview** (Space) of actual blob contents. The download path now
-  exists, so this is unblocked: fetch to a cache directory and hand the file to
-  `QLPreviewPanel`. Today the inspector shows the type icon, Finder-style.
 - **Delete** (⌘⌫) — with confirmation.
 - **Rename** (Return) — implemented as copy + delete (blob storage has no native
   rename).
@@ -44,6 +44,13 @@ These are the functional gaps; several Finder shortcuts are blocked on them.
   app cannot produce.
 - **Undo** — nothing registers an undo action today. Delete and rename will need it;
   the skill's guidance is to prefer undo over a confirmation sheet.
+
+### Quick Look
+- **Progress for a slow preview**: a Quick Look fetch is silent, so a large blob on a
+  slow link looks like nothing is happening between Space and the panel appearing.
+  Blobs over 64 MB are refused outright rather than fetched invisibly.
+- **Cache eviction**: previews accumulate under `~/Library/Caches` and are only
+  reclaimed by the system. A size cap or an age sweep would be tidier.
 
 ### Transfers
 - **Pause / resume** — only cancel and retry exist. True pause needs

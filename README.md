@@ -18,8 +18,9 @@ Columns (Miller) view with a bottom path bar and an object inspector/preview, an
 move bytes both ways as streaming, queued transfers: upload (File ▸ Upload… or
 drag-and-drop, including folders) — each showing the Event Grid `data.api` it will
 emit — and download (⌘D, double-click, or by dragging a blob out to the Finder,
-where it arrives as a file promise and fetches on drop). Full keyboard navigation,
-and a unit-test suite for the prediction/parsing/sort/naming logic.
+where it arrives as a file promise and fetches on drop). Space Quick Looks the real
+contents of a blob. Full keyboard navigation, and a unit-test suite for the
+prediction/parsing/sort/naming logic.
 
 **AWS S3 is still stubbed** — the biggest functional gap. See
 [`ROADMAP.md`](ROADMAP.md) for the near-term backlog and known gaps.
