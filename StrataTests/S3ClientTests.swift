@@ -228,6 +228,31 @@ struct S3XMLParsingTests {
         }
     }
 
+    /// Found against live S3: `GetBucketLocation`'s root element carries the S3
+    /// namespace, so an extractor matching only the bare `<LocationConstraint>` found
+    /// nothing and every bucket silently resolved to the us-east-1 default.
+    @Test("Extracts an element whose tag carries attributes")
+    func extractsNamespacedElement() {
+        let body = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">eu-west-1</LocationConstraint>
+            """
+        #expect(S3ErrorXMLParser.element("LocationConstraint", in: body) == "eu-west-1")
+    }
+
+    @Test("Doesn't match an element that merely starts with the same name")
+    func doesNotMatchLongerElementName() {
+        #expect(S3ErrorXMLParser.element("Code", in: "<CodeName>x</CodeName>") == nil)
+        // …but still finds the real one when both are present.
+        #expect(S3ErrorXMLParser.element("Code", in: "<CodeName>x</CodeName><Code>y</Code>") == "y")
+    }
+
+    @Test("An empty location constraint is absent, meaning us-east-1")
+    func emptyLocationConstraint() {
+        let body = "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"></LocationConstraint>"
+        #expect(S3ErrorXMLParser.element("LocationConstraint", in: body) == nil)
+    }
+
     @Test("Extracts error codes and messages")
     func extractsErrorFields() {
         let body = """
@@ -267,7 +292,8 @@ struct S3ResponseHandlingTests {
             status: 301,
             body: "<Error><Code>PermanentRedirect</Code></Error>",
             bucket: "my-bucket",
-            response: response(status: 301, headers: ["x-amz-bucket-region": "eu-west-1"])
+            response: response(status: 301, headers: ["x-amz-bucket-region": "eu-west-1"]),
+            signedRegion: "us-east-1"
         )
         guard case let S3Error.wrongRegion(bucket, correctRegion) = error else {
             Issue.record("expected wrongRegion, got \(error)")
@@ -275,6 +301,41 @@ struct S3ResponseHandlingTests {
         }
         #expect(bucket == "my-bucket")
         #expect(correctRegion == "eu-west-1")
+    }
+
+    /// What real S3 actually does, measured: a eu-west-1 bucket addressed as us-east-1
+    /// comes back **403 with `x-amz-bucket-region`**, not the 301 the documentation's
+    /// redirect examples suggest. Keying on the header rather than the status is what
+    /// the AWS SDKs do, and without it this reported as a permissions problem — sending
+    /// you to IAM to debug a routing issue.
+    @Test("A 403 carrying a different bucket region is a region problem, not a permissions one")
+    func forbiddenWithRegionHeaderIsWrongRegion() throws {
+        let error = S3RESTClient.error(
+            status: 403,
+            body: "<Error><Code>AccessDenied</Code></Error>",
+            bucket: "my-bucket",
+            response: response(status: 403, headers: ["x-amz-bucket-region": "eu-west-1"]),
+            signedRegion: "us-east-1"
+        )
+        guard case let S3Error.wrongRegion(_, correctRegion) = error else {
+            Issue.record("expected wrongRegion, got \(error)")
+            return
+        }
+        #expect(correctRegion == "eu-west-1")
+    }
+
+    /// The header matching the region we signed for means it really is a permissions
+    /// problem, and must not be misreported as a region one.
+    @Test("A 403 whose region header matches stays a permissions error")
+    func forbiddenWithMatchingRegionStaysForbidden() {
+        let error = S3RESTClient.error(
+            status: 403,
+            body: "<Error><Code>AccessDenied</Code></Error>",
+            bucket: "my-bucket",
+            response: response(status: 403, headers: ["x-amz-bucket-region": "us-east-1"]),
+            signedRegion: "us-east-1"
+        )
+        #expect(error as? StorageProviderError == .dataPlaneForbidden(account: "my-bucket"))
     }
 
     /// A signature mismatch caused by signing for the wrong region comes back as a 400,
@@ -285,7 +346,8 @@ struct S3ResponseHandlingTests {
             status: 400,
             body: "<Error><Code>AuthorizationHeaderMalformed</Code></Error>",
             bucket: "b",
-            response: response(status: 400, headers: ["x-amz-bucket-region": "us-west-1"])
+            response: response(status: 400, headers: ["x-amz-bucket-region": "us-west-1"]),
+            signedRegion: "us-east-1"
         )
         guard case S3Error.wrongRegion = error else {
             Issue.record("expected wrongRegion, got \(error)")
@@ -299,7 +361,8 @@ struct S3ResponseHandlingTests {
             status: 400,
             body: "<Error><Code>ExpiredToken</Code></Error>",
             bucket: "b",
-            response: response(status: 400)
+            response: response(status: 400),
+            signedRegion: "us-east-1"
         )
         #expect(expired as? StorageProviderError == .unauthorized)
 
@@ -307,7 +370,8 @@ struct S3ResponseHandlingTests {
             status: 403,
             body: "<Error><Code>AccessDenied</Code></Error>",
             bucket: "b",
-            response: response(status: 403)
+            response: response(status: 403),
+            signedRegion: "us-east-1"
         )
         #expect(denied as? StorageProviderError == .dataPlaneForbidden(account: "b"))
     }
@@ -318,7 +382,8 @@ struct S3ResponseHandlingTests {
             status: 404,
             body: "<Error><Code>NoSuchBucket</Code></Error>",
             bucket: "gone",
-            response: response(status: 404)
+            response: response(status: 404),
+            signedRegion: "us-east-1"
         )
         guard case let S3Error.noSuchBucket(name) = error else {
             Issue.record("expected noSuchBucket, got \(error)")
@@ -333,7 +398,8 @@ struct S3ResponseHandlingTests {
             status: 500,
             body: "<Error><Code>InternalError</Code><Message>We encountered an internal error</Message></Error>",
             bucket: "b",
-            response: response(status: 500)
+            response: response(status: 500),
+            signedRegion: "us-east-1"
         )
         guard case let S3Error.httpError(status, code, message) = error else {
             Issue.record("expected httpError, got \(error)")

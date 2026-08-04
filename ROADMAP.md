@@ -102,10 +102,19 @@ Still to do:
 - **Per-bucket region resolution** wired into connect: `ListBuckets` is global but
   object operations are regional, and `S3Error.wrongRegion` carries the correct region
   specifically so the client can retry rather than fail.
-- **Live verification.** Everything above is covered by unit tests and a stubbed
-  transport; none of it has spoken to a real S3 endpoint. Needs either an AWS account
-  plus `brew install awscli`, or MinIO/LocalStack — the latter also exercises the
-  custom-endpoint path, which is a feature in its own right.
+- ~~**Live verification.**~~ **Done** — `StrataTests/S3IntegrationTests.swift` runs
+  against real S3, covering listing, paging, awkward keys, metadata, download with
+  progress, PutObject round-trip, multipart, delete, region resolution, and path-style
+  addressing. Skipped unless `STRATA_S3_BUCKET`, `STRATA_S3_BUCKET_EU` and
+  `STRATA_S3_BUCKET_DOTTED` are set, so CI stays green without credentials. Note that
+  `xcodebuild` only forwards variables prefixed `TEST_RUNNER_` into an app-hosted test
+  process.
+
+  It found three real bugs that fixtures could not have (see the commit), which is the
+  argument for keeping it. What it still does **not** cover: an SSO or assume-role
+  profile (the account tested uses long-lived keys, so the refresh path is unexercised),
+  and S3-compatible endpoints — MinIO/LocalStack would exercise `S3Endpoint.customHost`,
+  which no test currently reaches over the wire.
 
 ### Event-awareness (the differentiator — v2)
 - Match the predicted `data.api` against the account's **actual Event Grid
