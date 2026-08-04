@@ -68,6 +68,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         if !window.setFrameUsingName(Self.frameAutosaveName) { window.center() }
         if isPrimary { window.setFrameAutosaveName(Self.frameAutosaveName) }
         Self.nextCascadePoint = window.cascadeTopLeft(from: Self.nextCascadePoint ?? .zero)
+
+        // The toolbar's tracking separator is bound to a split view divider, but the
+        // three lines above are what finally settle the window's size — and the split
+        // view restores its autosaved divider positions during layout. Configuring the
+        // toolbar earlier meant the titlebar's regions were first computed against a
+        // placeholder frame, and nothing invalidated them until a divider was dragged.
+        // Laying out here gives them the real geometry the first time.
+        splitViewController.view.layoutSubtreeIfNeeded()
     }
 
     deinit {
