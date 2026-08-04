@@ -237,6 +237,12 @@ struct S3RESTClient: Sendable {
     ///
     /// An abandoned multipart upload keeps billing for its stored parts, so a failure
     /// after initiation aborts rather than leaking them.
+    /// S3 rejects any part but the last below 5 MiB with `EntityTooSmall`, so a caller
+    /// deriving a part size from a configurable threshold can't be trusted to stay
+    /// above it. Clamped rather than rejected: a smaller threshold is a legitimate
+    /// request about *when* to go multipart, not about how to chunk it.
+    static let minimumPartSize = 5 * 1024 * 1024
+
     func putObjectMultipart(
         bucket: String,
         key: String,
@@ -245,6 +251,7 @@ struct S3RESTClient: Sendable {
         partSize: Int = 8 * 1024 * 1024,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
+        let partSize = max(partSize, Self.minimumPartSize)
         let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
         let uploadID = try await createMultipartUpload(bucket: bucket, key: key, contentType: contentType)
 

@@ -3,11 +3,17 @@ import AppKit
 @MainActor
 final class ConnectAccountViewController: NSViewController {
 
-    typealias AccountLoader = @Sendable () async throws -> [StorageAccountRef]
+    /// Enumerates the accounts on offer for one provider. Async and throwing because
+    /// both providers reach outside the app to answer — Azure to Resource Manager, S3
+    /// to the AWS config on disk.
+    typealias AccountLoader = @Sendable (ProviderKind) async throws -> [ConnectableAccount]
 
     private let loader: AccountLoader
-    private let onConnect: (String) -> Void
+    private let onConnect: (ProviderAccount) -> Void
     private let onCancel: () -> Void
+
+    /// Which provider's accounts are listed. Switching reloads the list.
+    private var selectedKind: ProviderKind
 
     // MARK: - UI
 
@@ -16,7 +22,9 @@ final class ConnectAccountViewController: NSViewController {
     // Loading state
     private let loadingStack = NSStackView()
     private let spinner = NSProgressIndicator()
-    private let loadingLabel = NSTextField(labelWithString: "Finding your storage accounts…")
+    private let loadingLabel = NSTextField(labelWithString: "")
+    /// Switches which provider's accounts are listed.
+    private let providerControl = NSSegmentedControl()
 
     // List state
     private let listStack = NSStackView()
@@ -44,10 +52,13 @@ final class ConnectAccountViewController: NSViewController {
     /// accounts land. The fallback state is genuinely terminal and sizes to itself.
     private static let listBodyHeight: CGFloat = 284
 
-    private var allAccounts: [StorageAccountRef] = []
-    private var filteredAccounts: [StorageAccountRef] = []
+    private var allAccounts: [ConnectableAccount] = []
+    private var filteredAccounts: [ConnectableAccount] = []
 
     private var hasStartedLoad = false
+    /// Bumped per load so a slow answer for a provider the user has since switched away
+    /// from is discarded rather than shown.
+    private var loadToken = 0
     /// The single active height constraint on `bodyContainer`, swapped per state so
     /// they don't accumulate and conflict.
     private var bodyHeightConstraint: NSLayoutConstraint?
@@ -55,9 +66,11 @@ final class ConnectAccountViewController: NSViewController {
     // MARK: - Init
 
     init(loader: @escaping AccountLoader,
-         onConnect: @escaping (String) -> Void,
+         initialKind: ProviderKind = .azureBlob,
+         onConnect: @escaping (ProviderAccount) -> Void,
          onCancel: @escaping () -> Void) {
         self.loader = loader
+        self.selectedKind = initialKind
         self.onConnect = onConnect
         self.onCancel = onCancel
         super.init(nibName: nil, bundle: nil)
@@ -71,14 +84,25 @@ final class ConnectAccountViewController: NSViewController {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 420))
 
         // Title
-        let titleLabel = NSTextField(labelWithString: "Connect to Azure Storage")
+        let titleLabel = NSTextField(labelWithString: "Connect to Storage")
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let subtitleLabel = NSTextField(labelWithString: "Choose a storage account from your Azure sign-in.")
+        let subtitleLabel = NSTextField(labelWithString: "Choose an account from a provider you\u{2019}re already signed in to.")
         subtitleLabel.font = .systemFont(ofSize: 12)
         subtitleLabel.textColor = .secondaryLabelColor
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        providerControl.segmentCount = Self.orderedKinds.count
+        for (index, kind) in Self.orderedKinds.enumerated() {
+            providerControl.setLabel(kind.displayName, forSegment: index)
+        }
+        providerControl.trackingMode = .selectOne
+        providerControl.selectedSegment = Self.orderedKinds.firstIndex(of: selectedKind) ?? 0
+        providerControl.target = self
+        providerControl.action = #selector(providerChanged)
+        providerControl.setAccessibilityLabel("Storage provider")
+        providerControl.translatesAutoresizingMaskIntoConstraints = false
 
         let headerSep = NSBox()
         headerSep.boxType = .separator
@@ -124,6 +148,7 @@ final class ConnectAccountViewController: NSViewController {
 
         view.addSubview(titleLabel)
         view.addSubview(subtitleLabel)
+        view.addSubview(providerControl)
         view.addSubview(headerSep)
         view.addSubview(bodyContainer)
         view.addSubview(manualField)
@@ -139,7 +164,11 @@ final class ConnectAccountViewController: NSViewController {
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
 
-            headerSep.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 14),
+            providerControl.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 12),
+            providerControl.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            providerControl.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+
+            headerSep.topAnchor.constraint(equalTo: providerControl.bottomAnchor, constant: 14),
             headerSep.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             headerSep.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
@@ -299,37 +328,91 @@ final class ConnectAccountViewController: NSViewController {
 
     // MARK: - Loading
 
+    /// The order the segmented control shows providers in.
+    static let orderedKinds: [ProviderKind] = [.azureBlob, .s3]
+
     override func viewDidAppear() {
         super.viewDidAppear()
         guard !hasStartedLoad else { return }
         hasStartedLoad = true
+        reload()
+    }
+
+    @objc private func providerChanged() {
+        let index = providerControl.selectedSegment
+        guard index >= 0, index < Self.orderedKinds.count else { return }
+        let kind = Self.orderedKinds[index]
+        guard kind != selectedKind else { return }
+        selectedKind = kind
+        searchField.stringValue = ""
+        manualField.stringValue = ""
+        reload()
+    }
+
+    private func reload() {
+        let kind = selectedKind
+        loadingLabel.stringValue = Self.loadingMessage(for: kind)
+        manualField.placeholderString = Self.manualEntryPlaceholder(for: kind)
+        allAccounts = []
+        filteredAccounts = []
+        tableView.reloadData()
+        applyState(.loading)
+        loadToken += 1
+        let token = loadToken
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let accounts = try await self.loader()
-                guard self.view.window != nil else { return }   // sheet dismissed before load returned
+                let accounts = try await self.loader(kind)
+                // The sheet may have been dismissed, or the user may have switched
+                // provider while this was in flight — either way the answer is stale.
+                guard self.view.window != nil, token == self.loadToken else { return }
                 self.allAccounts = accounts
                 self.filteredAccounts = accounts
                 if accounts.isEmpty {
-                    self.applyState(.fallback("No storage accounts found under your Azure sign-in."))
+                    self.applyState(.fallback(Self.emptyMessage(for: kind)))
                 } else {
                     self.applyState(.list)
                     self.tableView.reloadData()
                 }
             } catch {
-                guard self.view.window != nil else { return }   // sheet dismissed before load returned
-                self.applyState(.fallback(self.fallbackMessage(for: error)))
+                guard self.view.window != nil, token == self.loadToken else { return }
+                self.applyState(.fallback(self.fallbackMessage(for: error, kind: kind)))
             }
         }
     }
 
-    private func fallbackMessage(for error: Error) -> String {
+    private static func loadingMessage(for kind: ProviderKind) -> String {
+        switch kind {
+        case .azureBlob: return "Finding your storage accounts…"
+        case .s3: return "Reading your AWS profiles…"
+        }
+    }
+
+    private static func manualEntryPlaceholder(for kind: ProviderKind) -> String {
+        switch kind {
+        case .azureBlob: return "or enter an account name…"
+        case .s3: return "or enter a profile name…"
+        }
+    }
+
+    private static func emptyMessage(for kind: ProviderKind) -> String {
+        switch kind {
+        case .azureBlob:
+            return "No storage accounts found under your Azure sign-in."
+        case .s3:
+            return "No AWS profiles found in ~/.aws. Run \u{2018}aws configure\u{2019} (or \u{2018}aws sso login\u{2019}) and try again."
+        }
+    }
+
+    private func fallbackMessage(for error: Error, kind: ProviderKind) -> String {
         switch error {
         case AzureManagementError.managementForbidden:
             return "Your sign-in doesn\u{2019}t have directory/reader access to list accounts. You can still enter a name below."
         case AzureManagementError.unauthorized:
             return "Authentication failed. Check that \u{2018}az login\u{2019} is current, then try again."
+        case AWSCLIError.binaryNotFound:
+            return "The AWS CLI wasn\u{2019}t found. Install it (\u{2018}brew install awscli\u{2019}) or enter a profile name below."
         default:
             return "Couldn\u{2019}t list accounts. You can still enter a name below."
         }
@@ -344,7 +427,7 @@ final class ConnectAccountViewController: NSViewController {
         } else {
             filteredAccounts = allAccounts.filter {
                 $0.name.localizedCaseInsensitiveContains(query) ||
-                $0.subscriptionName.localizedCaseInsensitiveContains(query)
+                $0.detail.localizedCaseInsensitiveContains(query)
             }
         }
         tableView.reloadData()
@@ -378,7 +461,7 @@ final class ConnectAccountViewController: NSViewController {
 
     @objc private func connectClicked() {
         guard let name = resolvedAccountName() else { return }
-        onConnect(name)
+        onConnect(ProviderAccount(kind: selectedKind, name: name))
         dismiss(nil)
     }
 
@@ -489,10 +572,11 @@ private final class AccountRowView: NSTableCellView {
         ])
     }
 
-    func configure(with account: StorageAccountRef) {
+    func configure(with account: ConnectableAccount) {
         nameLabel.stringValue = account.name
-        secondaryLabel.stringValue = "\(account.subscriptionName) \u{00B7} \(account.location)"
-        badgeBox.isHidden = !account.isHierarchicalNamespace
+        secondaryLabel.stringValue = account.detail
+        badgeLabel.stringValue = account.badge ?? ""
+        badgeBox.isHidden = account.badge == nil
     }
 
     private func refreshBadgeColor() {

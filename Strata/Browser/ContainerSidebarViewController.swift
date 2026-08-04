@@ -4,7 +4,9 @@ import AppKit
 private final class SidebarGroup: NSObject {
     enum Kind { case favorites, containers }
     let kind: Kind
-    let title: String
+    /// Mutable because the containers group is titled in the connected provider's
+    /// vocabulary — "Containers" on Azure, "Buckets" on S3.
+    var title: String
     var children: [NSObject]
 
     init(kind: Kind, title: String, children: [NSObject]) {
@@ -108,6 +110,10 @@ final class ContainerSidebarViewController: NSViewController, NSOutlineViewDataS
 
     func setContainers(_ containers: [StorageContainer]) {
         containersGroup.children = containers.map(SidebarContainerNode.init)
+        // Calling an S3 user's buckets "containers" is the kind of small wrongness that
+        // makes an app feel like it was built for somebody else.
+        let noun = currentAccount?.kind.containerNoun ?? "container"
+        containersGroup.title = noun.capitalized + "s"
         rebuildGroups()
     }
 

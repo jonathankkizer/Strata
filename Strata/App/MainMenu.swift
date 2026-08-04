@@ -149,7 +149,7 @@ enum MainMenu {
             goTo.keyEquivalentModifierMask = [.command, .shift]
             menu.addItem(.separator())
             // ⌘K mirrors Finder's "Connect to Server…".
-            menu.addItem(withTitle: "Connect to Azure Storage Account…", action: #selector(BrowserSplitViewController.connectStorageAccount(_:)), keyEquivalent: "k")
+            menu.addItem(withTitle: "Connect to Storage Account…", action: #selector(BrowserSplitViewController.connectStorageAccount(_:)), keyEquivalent: "k")
         }
     }
 

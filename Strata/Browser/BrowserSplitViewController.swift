@@ -163,19 +163,29 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     // MARK: - Actions
 
     @objc func connectStorageAccount(_ sender: Any?) {
-        // The account picker enumerates via the management plane, which is a
-        // different token audience than the blob data plane we browse with.
+        // Azure enumerates via the management plane, which is a different token
+        // audience than the blob data plane we browse with.
         let managementToken = AzureCLITokenProvider(
             configuration: .init(resource: AzureAuth.managementResource)
         )
         let management = AzureManagementClient(tokenSource: managementToken)
 
         let picker = ConnectAccountViewController(
-            loader: { try await management.listAllStorageAccounts() },
-            // The picker enumerates Azure storage accounts specifically, so whatever it
-            // returns is an Azure account by construction. A provider chooser in front
-            // of this sheet is a later stage.
-            onConnect: { [weak self] account in self?.connect(account: .azure(account)) },
+            loader: { kind in
+                switch kind {
+                case .azureBlob:
+                    return try await management.listAllStorageAccounts().map(ConnectableAccount.init(azure:))
+                case .s3:
+                    // Profiles come off disk, so this is effectively instant — but it
+                    // stays async because the Azure side isn't and the picker shouldn't
+                    // care which it's asking.
+                    return AWSConfigFile.profilesOnDisk().map(ConnectableAccount.init(awsProfile:))
+                }
+            },
+            // Opens on whichever provider this window is already connected to, so
+            // reconnecting elsewhere in the same cloud doesn't start with a switch.
+            initialKind: account?.kind ?? .azureBlob,
+            onConnect: { [weak self] account in self?.connect(account: account) },
             onCancel: {}
         )
         presentAsSheet(picker)

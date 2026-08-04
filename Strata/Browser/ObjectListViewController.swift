@@ -101,7 +101,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         showEmptyState(
             symbol: "externaldrive.badge.questionmark",
             title: "No Account Connected",
-            subtitle: "Connect to an Azure storage account to browse your containers and blobs.",
+            subtitle: "Connect to a storage account to browse your buckets and objects.",
             actionTitle: "Connect\u{2026}",
             action: #selector(BrowserSplitViewController.connectStorageAccount(_:))
         )

@@ -17,7 +17,13 @@ enum ProviderFactory {
                 tokenSource: AzureCLITokenProvider()
             )
         case .s3:
-            return S3Provider(displayName: account.name)
+            // The profile's own `region` is the starting point; buckets living
+            // elsewhere are discovered and remembered by the provider on first use.
+            let profile = AWSConfigFile.profilesOnDisk().first { $0.name == account.name }
+            return S3Provider(
+                profile: account.name,
+                region: profile?.region ?? "us-east-1"
+            )
         }
     }
 }

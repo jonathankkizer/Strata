@@ -128,9 +128,9 @@ final class WelcomeWindowController: NSWindowController, NSTableViewDataSource, 
         // own and never will. If `az login` hasn't happened, connecting cannot work,
         // and saying so here beats an auth error later.
         let signInNote = NSTextField(wrappingLabelWithString:
-            "Strata browses Azure Blob Storage using the Azure CLI's sign-in — run "
-            + "az login once and Strata asks it for a fresh token each time. Nothing "
-            + "is stored here."
+            "Strata browses Azure Blob Storage and Amazon S3 using the sign-in you "
+            + "already have — run az login or aws configure once, and Strata asks the "
+            + "CLI for fresh credentials each time. Nothing is stored here."
         )
         signInNote.font = .systemFont(ofSize: 11)
         signInNote.textColor = .secondaryLabelColor
@@ -142,7 +142,7 @@ final class WelcomeWindowController: NSWindowController, NSTableViewDataSource, 
         identity.spacing = 2
 
         var buttons = [makeActionButton(
-            title: "Connect to Azure Storage Account…",
+            title: "Connect to Storage Account…",
             symbolName: "externaldrive.badge.plus",
             action: #selector(connectClicked(_:))
         )]

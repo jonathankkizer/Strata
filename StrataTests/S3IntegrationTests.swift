@@ -233,6 +233,91 @@ struct S3IntegrationTests {
         try await client.deleteObject(bucket: environment.bucket, key: key)
     }
 
+    // MARK: - Through the provider
+
+    /// Everything above drives `S3RESTClient` directly. These go through `S3Provider`,
+    /// which is what the browse surface actually holds — so they cover the wiring the
+    /// UI depends on, not just the transport underneath it.
+    private func liveProvider(region: String = "us-east-1") -> S3Provider {
+        S3Provider(profile: AWSAuth.defaultProfileName, region: region)
+    }
+
+    @Test("The provider lists buckets and objects")
+    func providerListsThroughTheProtocol() async throws {
+        let provider = liveProvider()
+        #expect(try await provider.listContainers().contains { $0.name == environment.bucket })
+
+        let objects = try await provider.listObjects(
+            in: StorageContainer(name: environment.bucket),
+            prefix: Self.seededPrefix
+        )
+        #expect(objects.contains { $0.key == "logs/small.txt" })
+        #expect(objects.contains { $0.isPrefix && $0.key == "logs/2026/" })
+    }
+
+    /// Stage 4's whole point: a bucket in a region the profile isn't configured for
+    /// opens anyway. The provider takes S3's correction and retries, so the user never
+    /// sees a region error for a bucket they can see in the sidebar.
+    @Test("The provider opens a bucket in another region without being told")
+    func providerCrossesRegionsTransparently() async throws {
+        // Configured for us-east-1; the bucket lives in eu-west-1.
+        let provider = liveProvider(region: "us-east-1")
+        let objects = try await provider.listObjects(
+            in: StorageContainer(name: environment.euBucket),
+            prefix: ""
+        )
+        #expect(objects.isEmpty)   // the eu bucket is empty, but reaching it is the point
+    }
+
+    @Test("The provider reads metadata through the same path")
+    func providerFetchesMetadata() async throws {
+        let metadata = try await liveProvider().fetchMetadata(
+            for: StorageObject(key: "logs/tagged.txt"),
+            in: StorageContainer(name: environment.bucket)
+        )
+        #expect(metadata.contentType == "text/plain")
+        #expect(metadata.custom["owner"] == "data-team")
+    }
+
+    /// The upload path the transfer queue calls, with the plan deciding the operation —
+    /// so a prediction shown in the UI and the write that follows it stay in step.
+    @Test("The provider uploads and downloads through a plan")
+    func providerRoundTripsWithPlan() async throws {
+        let provider = liveProvider()
+        let container = StorageContainer(name: environment.bucket)
+        let key = "strata-integration/provider-\(UUID().uuidString).txt"
+        let payload = Data("via the provider\n".utf8)
+
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("strata-provider-\(UUID().uuidString).txt")
+        try payload.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let plan = UploadPlan(byteCount: Int64(payload.count), target: .s3)
+        #expect(plan.usesMultipleRequests == false)
+
+        try await provider.upload(
+            from: source,
+            toKey: key,
+            in: container,
+            contentType: "text/plain",
+            plan: plan,
+            onProgress: nil
+        )
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("strata-provider-back-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        try await provider.download(fromKey: key, in: container, to: destination, onProgress: nil)
+        #expect(try Data(contentsOf: destination) == payload)
+
+        // Cleaned up through the client, since deletion isn't on the provider protocol yet.
+        try await S3RESTClient(
+            endpoint: S3Endpoint(region: "us-east-1"),
+            credentialSource: AWSCLICredentialProvider()
+        ).deleteObject(bucket: environment.bucket, key: key)
+    }
+
     // MARK: - Addressing and regions
 
     /// The case a local S3-compatible server cannot reproduce: a bucket addressed with
