@@ -11,6 +11,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# CI only reads the checkout; the token should not be able to do anything else.
+permissions:
+  contents: read
+
 jobs:
   test:
     # Must be macos-26 or newer: MACOSX_DEPLOYMENT_TARGET is 26.0, and the test
@@ -18,10 +22,10 @@ jobs:
     # the tests cannot run, even though the build would succeed.
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: latest-stable
 

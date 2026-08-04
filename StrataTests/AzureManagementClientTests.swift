@@ -58,6 +58,20 @@ struct AzureManagementClientTests {
         #expect(zz.subscriptionName == "Sub Two")
     }
 
+    // MARK: - nextLink hygiene
+
+    @Test("A nextLink is followed only on the client's own host over https")
+    func nextLinkStaysHome() {
+        let client = makeClient()
+        #expect(client.nextPageURL("https://management.azure.com/subscriptions?_page=2") != nil)
+        // The follow-up request carries the management Bearer token, so a link
+        // pointing anywhere else must end pagination, not forward the token.
+        #expect(client.nextPageURL("https://evil.example.com/subscriptions") == nil)
+        #expect(client.nextPageURL("http://management.azure.com/subscriptions") == nil)
+        #expect(client.nextPageURL("not a url") == nil)
+        #expect(client.nextPageURL(nil) == nil)
+    }
+
     // MARK: - Resource-group extraction
 
     @Test("Extracts the resource group from an ARM resource ID (case-insensitive)")

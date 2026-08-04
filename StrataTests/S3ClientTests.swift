@@ -47,6 +47,20 @@ struct S3EndpointTests {
         #expect(S3Endpoint.isDNSCompatible(bucket: String(repeating: "a", count: 64)) == false)
     }
 
+    @Test("Region validation accepts real regions and rejects host metacharacters")
+    func regionValidation() {
+        #expect(S3Endpoint.isValidRegion("us-east-1"))
+        #expect(S3Endpoint.isValidRegion("eu-central-1"))
+        #expect(S3Endpoint.isValidRegion("ap-southeast-3"))
+        #expect(S3Endpoint.isValidRegion("us-gov-west-1"))
+        #expect(S3Endpoint.isValidRegion("") == false)
+        #expect(S3Endpoint.isValidRegion("us-east-1.evil.com") == false)
+        #expect(S3Endpoint.isValidRegion("us east") == false)
+        #expect(S3Endpoint.isValidRegion("region/path") == false)
+        #expect(S3Endpoint.isValidRegion("UPPER") == false)
+        #expect(S3Endpoint.isValidRegion(String(repeating: "a", count: 33)) == false)
+    }
+
     /// The MinIO/R2/Backblaze case — and the only way to integration-test this without
     /// an AWS account.
     @Test("A custom host defaults to path style")
@@ -464,5 +478,14 @@ struct S3ResponseHandlingTests {
     func completionXMLSinglePart() {
         #expect(S3RESTClient.completionXML(parts: [(number: 1, etag: "\"a\"")])
             == "<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>\"a\"</ETag></Part></CompleteMultipartUpload>")
+    }
+
+    @Test("Completion XML escapes a hostile ETag instead of splicing it into the body")
+    func completionXMLEscapesETag() {
+        let xml = S3RESTClient.completionXML(parts: [(number: 1, etag: "\"a<b>&c\"")])
+        #expect(xml.contains("<ETag>\"a&lt;b&gt;&amp;c\"</ETag>"))
+        // Real multipart ETags pass through byte-for-byte.
+        #expect(S3RESTClient.completionXML(parts: [(number: 1, etag: "\"9bb58f26-2\"")])
+            .contains("<ETag>\"9bb58f26-2\"</ETag>"))
     }
 }

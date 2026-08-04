@@ -388,11 +388,17 @@ struct S3RESTClient: Sendable {
     }
 
     /// The completion body must list parts in ascending order with their ETags exactly
-    /// as returned — quotes included.
+    /// as returned — quotes included. The ETag is server-supplied text landing inside
+    /// XML, so its metacharacters are escaped; real ETags (hex, quotes, `-N` multipart
+    /// suffixes) pass through byte-for-byte.
     static func completionXML(parts: [(number: Int, etag: String)]) -> String {
         let entries = parts.sorted { $0.number < $1.number }.map { part in
-            let etag = part.etag.hasPrefix("\"") ? part.etag : "\"\(part.etag)\""
-            return "<Part><PartNumber>\(part.number)</PartNumber><ETag>\(etag)</ETag></Part>"
+            let quoted = part.etag.hasPrefix("\"") ? part.etag : "\"\(part.etag)\""
+            let escaped = quoted
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            return "<Part><PartNumber>\(part.number)</PartNumber><ETag>\(escaped)</ETag></Part>"
         }.joined()
         return "<CompleteMultipartUpload>\(entries)</CompleteMultipartUpload>"
     }

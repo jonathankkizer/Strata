@@ -446,8 +446,7 @@ final class ConnectAccountViewController: NSViewController {
             connectButton.isEnabled = false
         case .list, .fallback:
             let hasSelection = tableView.selectedRow >= 0
-            let hasText = !manualField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
-            connectButton.isEnabled = hasSelection || hasText
+            connectButton.isEnabled = hasSelection || manualEntryName() != nil
         }
     }
 
@@ -455,8 +454,19 @@ final class ConnectAccountViewController: NSViewController {
         if case .list = state, tableView.selectedRow >= 0 {
             return filteredAccounts[tableView.selectedRow].name
         }
+        return manualEntryName()
+    }
+
+    /// The manually typed name, or nil when there isn't a usable one. An Azure name
+    /// becomes the request hostname, so a string that can't be a storage account
+    /// name is treated the same as no entry at all rather than handed to `connect`.
+    private func manualEntryName() -> String? {
         let text = manualField.stringValue.trimmingCharacters(in: .whitespaces)
-        return text.isEmpty ? nil : text
+        guard !text.isEmpty else { return nil }
+        if selectedKind == .azureBlob, !AzureStorageEndpoint.isValidAccountName(text) {
+            return nil
+        }
+        return text
     }
 
     @objc private func connectClicked() {

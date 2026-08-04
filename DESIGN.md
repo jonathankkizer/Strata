@@ -113,7 +113,7 @@ Auth is a small strategy layer with ordered sources, a token cache keyed by (acc
    - **Using the token:** set `Authorization: Bearer <accessToken>` **and** `x-ms-version: 2017-11-09` or higher. Without a recent `x-ms-version`, the service rejects bearer auth ("Authentication scheme Bearer is not supported in this version").
    - **Multi-subscription / multi-tenant:** pass `--subscription <id>` / `--tenant <id>`; enumerate with `az account list` / `az account show` and let the user pick. Token is tenant-scoped; the account's tenant must match.
 2. **Native interactive login via MSAL for Apple platforms.** Microsoft ships MSAL for Swift/Obj-C. Gives an in-app `az login`–equivalent (interactive browser or device-code) with **no CLI dependency** — the right path for users without the CLI. This is a separate login, complementary to option 1, not a substitute.
-3. **Service principal** (client ID + secret + tenant) via client-credentials grant against `https://storage.azure.com/`. Common in CI/CD, and likely already present in Suvida's Azure Functions / Logic Apps config.
+3. **Service principal** (client ID + secret + tenant) via client-credentials grant against `https://storage.azure.com/`. Common in CI/CD, and typically already present in Azure Functions / Logic Apps config.
 4. **Storage account access key** — simplest, still widely used. Direct Shared Key signing, no Entra involved.
 5. **SAS token** — for scoped/shared access. Prefer user-delegation SAS (Entra-secured) over account-key SAS where possible.
 
@@ -238,7 +238,7 @@ The differentiator for the actual target user.
 
 When in doubt: what would Panic do?
 
-Build the app you actually want to use at work. Dogfood it daily. Ship v1 when it can replace the AWS Console + Azure Portal for your day-to-day Suvida data platform work — including the thing no other tool does: telling you, before you upload, whether your blob will actually trigger the pipeline waiting for it. Everything after that is upside.
+Build the app you actually want to use at work. Dogfood it daily. Ship v1 when it can replace the AWS Console + Azure Portal for your day-to-day data platform work — including the thing no other tool does: telling you, before you upload, whether your blob will actually trigger the pipeline waiting for it. Everything after that is upside.
 
 ---
 

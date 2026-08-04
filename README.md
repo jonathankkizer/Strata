@@ -54,7 +54,7 @@ Strata/
   Browser/                Dual-pane browser window + content controllers
   Model/                  Provider-agnostic core: StorageProvider, StorageContainer,
                           StorageObject, Transfer, and BlobEvent (the event model)
-  Providers/S3/           Amazon S3 provider (AWS SDK for Swift) — stub
+  Providers/S3/           Amazon S3 provider (hand-rolled REST + SigV4, no SDK)
   Providers/Azure/        Azure Blob provider (hand-rolled REST), auth strategy,
                           and the event-prediction service
   Transfer/               TransferQueue actor

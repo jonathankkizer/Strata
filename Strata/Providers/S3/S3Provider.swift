@@ -160,7 +160,10 @@ final class S3Provider: StorageProvider {
         } catch let error as S3Error {
             guard case let .wrongRegion(_, correctRegion) = error,
                   let correctRegion,
-                  correctRegion != endpoint.region else {
+                  correctRegion != endpoint.region,
+                  // The redirect's region is a server-supplied string headed for host
+                  // position; a value that can't be a region must not be adopted.
+                  S3Endpoint.isValidRegion(correctRegion) else {
                 throw error
             }
             await regions.remember(correctRegion, for: bucket)
