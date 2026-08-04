@@ -1,7 +1,5 @@
 {
-  "fill" : {
-    "automatic-gradient" : "display-p3:0.77923,0.96783,0.63904,1.00000"
-  },
+  "fill" : "system-dark",
   "groups" : [
     {
       "layers" : [
