@@ -35,14 +35,30 @@ struct TitlebarBackdropTests {
         #expect(plain.backgroundColor == .controlBackgroundColor)
     }
 
-    /// The sidebar must *not* be given a backdrop — doing so would flatten the vibrancy
-    /// that makes it read as a sidebar at all.
-    @Test("The sidebar stays transparent on purpose")
-    func sidebarStaysTransparent() throws {
+    /// The sidebar gets the opposite treatment: a real `.sidebar` material, with the
+    /// scroll view transparent on top of it.
+    ///
+    /// `.sourceList` styling paints no background of its own — it expects to sit on that
+    /// material. Without it the sidebar was bare window background, which is what made
+    /// the titlebar above it read as undifferentiated.
+    @Test("The sidebar sits on a sidebar material")
+    func sidebarHasSidebarMaterial() throws {
         let sidebar = ContainerSidebarViewController()
         sidebar.loadViewIfNeeded()
 
-        let scrollView = try #require(sidebar.view as? NSScrollView)
+        let backdrop = try #require(sidebar.view as? NSVisualEffectView)
+        #expect(backdrop.material == .sidebar)
+        // Behind-window blending is what makes a sidebar translucent over the desktop;
+        // `.withinWindow` would look flat and opaque.
+        #expect(backdrop.blendingMode == .behindWindow)
+        // Dims when the window isn't frontmost, like every other Mac sidebar.
+        #expect(backdrop.state == .followsWindowActiveState)
+
+        // The scroll view on top must stay transparent, or it would paint over the
+        // material it's sitting on.
+        let scrollView = try #require(
+            backdrop.subviews.compactMap { $0 as? NSScrollView }.first
+        )
         #expect(scrollView.drawsBackground == false)
     }
 }
