@@ -1,28 +1,15 @@
 {
   "fill" : {
-    "linear-gradient" : [
-      "display-p3:0.96783,0.54783,0.28408,1.00000",
-      "display-p3:1.02644,0.67365,0.45210,1.00000"
-    ],
-    "orientation" : {
-      "start" : {
-        "x" : 0.5,
-        "y" : 0
-      },
-      "stop" : {
-        "x" : 0.5,
-        "y" : 0.7
-      }
-    }
+    "automatic-gradient" : "display-p3:0.77923,0.96783,0.63904,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
+          "blend-mode" : "normal",
           "glass" : true,
-          "hidden" : false,
-          "image-name" : "ai-generated-2ec92252-f7df-4192-99e5-6fd73456791d.svg",
-          "name" : "ai-generated-2ec92252-f7df-4192-99e5-6fd73456791d",
+          "image-name" : "bucket-icon.svg",
+          "name" : "bucket-icon",
           "position" : {
             "scale" : 1.1,
             "translation-in-points" : [
