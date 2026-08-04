@@ -12,6 +12,20 @@ struct AzureStorageEndpoint: Sendable, Hashable {
         self.blobSuffix = blobSuffix
     }
 
+    /// Azure's actual naming rule: 3–24 lowercase ASCII letters and digits. This is
+    /// a security boundary, not just tidiness — `baseURL` interpolates the name into
+    /// host position, so a name containing `/` or other URL metacharacters would
+    /// redirect requests (and the Bearer token on them) to a different host. Every
+    /// path that accepts an account name (typed, favorited, dragged, restored) must
+    /// pass this before an endpoint is built — the S3 side's `isDNSCompatible`, for
+    /// the same reason.
+    static func isValidAccountName(_ name: String) -> Bool {
+        (3...24).contains(name.count) && name.allSatisfy { character in
+            character.isASCII && (character.isNumber || (character.isLetter && character.isLowercase))
+        }
+    }
+
+    /// Only meaningful for a valid account name; see `isValidAccountName`.
     var baseURL: URL {
         URL(string: "https://\(account).\(blobSuffix)")!
     }

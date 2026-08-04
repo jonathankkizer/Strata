@@ -75,7 +75,7 @@ struct AzureManagementClient: Sendable {
             results.append(contentsOf: decoded.value.map {
                 AzureSubscription(subscriptionId: $0.subscriptionId, displayName: $0.displayName ?? $0.subscriptionId)
             })
-            url = decoded.nextLink.flatMap(URL.init(string:))
+            url = nextPageURL(decoded.nextLink)
             page += 1
         }
         return results
@@ -104,7 +104,7 @@ struct AzureManagementClient: Sendable {
                     isHierarchicalNamespace: item.properties?.isHnsEnabled ?? false
                 ))
             }
-            url = decoded.nextLink.flatMap(URL.init(string:))
+            url = nextPageURL(decoded.nextLink)
             page += 1
         }
         return results
@@ -135,6 +135,18 @@ struct AzureManagementClient: Sendable {
     }
 
     // MARK: - Transport
+
+    /// A page's `nextLink`, followed only when it stays on this client's own host
+    /// over https. The link arrives in a response body and the follow-up request
+    /// attaches the management-plane Bearer token — so a link pointing anywhere
+    /// else ends the pagination rather than forwarding the token there.
+    func nextPageURL(_ nextLink: String?) -> URL? {
+        guard let nextLink,
+              let url = URL(string: nextLink),
+              url.scheme == "https",
+              url.host == baseURL.host else { return nil }
+        return url
+    }
 
     private func get(_ url: URL) async throws -> Data {
         let token = try await tokenSource.token(asOf: Date())

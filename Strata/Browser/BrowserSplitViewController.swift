@@ -681,6 +681,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     // MARK: - Connect
 
     func connect(account: ProviderAccount) {
+        // The one gate every ingress funnels through — typed, favorited, dragged, or
+        // restored. An Azure account name lands in host position of every request
+        // URL, so a malformed one must never reach the endpoint (see
+        // `AzureStorageEndpoint.isValidAccountName`).
+        if account.kind == .azureBlob, !AzureStorageEndpoint.isValidAccountName(account.name) {
+            content.showMessage("“\(account.name)” isn’t a valid storage account name.\n\nAccount names are 3–24 lowercase letters and numbers.")
+            return
+        }
         let provider = ProviderFactory.make(for: account)
         self.provider = provider
         content.provider = provider

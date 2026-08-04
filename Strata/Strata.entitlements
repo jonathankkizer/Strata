@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- The app is deliberately NOT sandboxed (it spawns the aws/az CLIs and reads
+	     ~/.aws, which the sandbox forbids), so this entitlement is currently inert —
+	     network.client only gates anything inside the App Sandbox. It is kept as a
+	     statement of intent: if sandboxing ever becomes viable, outbound network
+	     access is the one capability the app needs. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
 </dict>

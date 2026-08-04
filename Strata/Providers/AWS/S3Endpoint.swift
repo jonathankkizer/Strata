@@ -44,6 +44,17 @@ struct S3Endpoint: Sendable, Hashable {
         return bucket.allSatisfy { $0.isLowercase || $0.isNumber || $0 == "-" }
     }
 
+    /// Whether a string is plausibly an AWS region. Regions are interpolated into
+    /// host position (`s3.<region>.amazonaws.com`), and a wrong-region redirect
+    /// carries the region as a server-supplied string — so anything beyond
+    /// lowercase-alnum-hyphen must be rejected before it's adopted, not signed and
+    /// sent to whatever host it names.
+    static func isValidRegion(_ region: String) -> Bool {
+        (1...32).contains(region.count) && region.allSatisfy { character in
+            character.isASCII && (character.isNumber || (character.isLetter && character.isLowercase) || character == "-")
+        }
+    }
+
     /// The service-level URL, for operations with no bucket (ListBuckets).
     var serviceURL: URL {
         if let customHost { return customHost }
