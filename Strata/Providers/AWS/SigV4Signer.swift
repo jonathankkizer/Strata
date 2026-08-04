@@ -172,6 +172,23 @@ struct SigV4Signer: Sendable {
         return segment.addingPercentEncoding(withAllowedCharacters: allowed) ?? segment
     }
 
+    /// Builds a query string with SigV4's encoding rules, already sorted into canonical
+    /// order.
+    ///
+    /// This exists because `URLComponents` cannot be used to build one. Its encoding is
+    /// RFC 3986-legal but more permissive than SigV4: it leaves `/` bare in a query
+    /// value, so `prefix=logs/` goes out on the wire unescaped. AWS re-canonicalises
+    /// what it receives to `prefix=logs%2F`, signs *that*, and the signatures disagree —
+    /// every listing request comes back 403. Verified against live S3: requests without
+    /// a query succeeded while every request carrying `prefix` or `delimiter` failed.
+    static func canonicalQueryString(_ items: [(name: String, value: String)]) -> String {
+        items
+            .map { (encodePathSegment($0.name), encodePathSegment($0.value)) }
+            .sorted { ($0.0, $0.1) < ($1.0, $1.1) }
+            .map { "\($0.0)=\($0.1)" }
+            .joined(separator: "&")
+    }
+
     /// Encodes an object key into a URL path, keeping `/` as a separator so prefixes
     /// stay real path components.
     static func encodeKey(_ key: String) -> String {

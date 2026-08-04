@@ -203,13 +203,31 @@ enum S3ErrorXMLParser {
 
     /// Also used for the single-value responses (`GetBucketLocation`,
     /// `CreateMultipartUpload`'s `UploadId`), which don't warrant a delegate parser.
+    ///
+    /// The opening tag may carry attributes, and a root element generally does:
+    /// `GetBucketLocation` answers
+    /// `<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">eu-west-1</…>`.
+    /// Matching only the bare `<LocationConstraint>` silently found nothing and every
+    /// bucket resolved to the us-east-1 default — caught against live S3, since the
+    /// fixtures had been written without the namespace.
     static func element(_ name: String, in body: String) -> String? {
-        guard let start = body.range(of: "<\(name)>"),
-              let end = body.range(of: "</\(name)>", range: start.upperBound..<body.endIndex) else {
-            return nil
+        var searchStart = body.startIndex
+        while let open = body.range(of: "<\(name)", range: searchStart..<body.endIndex) {
+            // The next character must end the tag or begin an attribute, or this is a
+            // longer element name that merely starts the same way.
+            guard let following = body[open.upperBound...].first else { return nil }
+            guard following == ">" || following.isWhitespace else {
+                searchStart = open.upperBound
+                continue
+            }
+            guard let tagEnd = body.range(of: ">", range: open.upperBound..<body.endIndex),
+                  let close = body.range(of: "</\(name)>", range: tagEnd.upperBound..<body.endIndex) else {
+                return nil
+            }
+            let value = String(body[tagEnd.upperBound..<close.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
         }
-        let value = String(body[start.upperBound..<end.lowerBound])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
+        return nil
     }
 }

@@ -75,16 +75,19 @@ struct S3RESTClient: Sendable {
         guard var components = URLComponents(url: endpoint.bucketURL(bucket), resolvingAgainstBaseURL: false) else {
             throw S3Error.malformedResponse
         }
-        var query = [
-            URLQueryItem(name: "list-type", value: "2"),
-            URLQueryItem(name: "max-keys", value: String(maxKeys)),
+        var query: [(name: String, value: String)] = [
+            ("list-type", "2"),
+            ("max-keys", String(maxKeys)),
         ]
-        if !prefix.isEmpty { query.append(URLQueryItem(name: "prefix", value: prefix)) }
-        if let delimiter { query.append(URLQueryItem(name: "delimiter", value: delimiter)) }
+        if !prefix.isEmpty { query.append(("prefix", prefix)) }
+        if let delimiter { query.append(("delimiter", delimiter)) }
         if let continuationToken {
-            query.append(URLQueryItem(name: "continuation-token", value: continuationToken))
+            query.append(("continuation-token", continuationToken))
         }
-        components.queryItems = query
+        // `percentEncodedQuery` with our own encoder, never `queryItems` — see
+        // `SigV4Signer.canonicalQueryString`. URLComponents' encoding is too permissive
+        // for SigV4 and every listing would 403.
+        components.percentEncodedQuery = SigV4Signer.canonicalQueryString(query)
         guard let url = components.url else { throw S3Error.malformedResponse }
 
         let data = try await perform(method: "GET", url: url, payload: .empty, bucket: bucket).data
@@ -93,7 +96,15 @@ struct S3RESTClient: Sendable {
 
     /// Every page of a listing. S3 caps a response at 1000 keys, so a folder with more
     /// than that would silently appear truncated without this.
-    func listAllObjects(bucket: String, prefix: String, delimiter: String? = "/") async throws -> [StorageObject] {
+    ///
+    /// `maxKeys` is exposed mainly so tests can force real paging against a handful of
+    /// objects rather than having to create a thousand.
+    func listAllObjects(
+        bucket: String,
+        prefix: String,
+        delimiter: String? = "/",
+        maxKeys: Int = 1000
+    ) async throws -> [StorageObject] {
         var all: [StorageObject] = []
         var token: String?
         repeat {
@@ -101,7 +112,8 @@ struct S3RESTClient: Sendable {
                 bucket: bucket,
                 prefix: prefix,
                 delimiter: delimiter,
-                continuationToken: token
+                continuationToken: token,
+                maxKeys: maxKeys
             )
             all.append(contentsOf: page.objects)
             token = page.isTruncated ? page.continuationToken : nil
@@ -140,7 +152,13 @@ struct S3RESTClient: Sendable {
         guard (200..<300).contains(http.statusCode) else {
             // A failed GET still writes S3's error XML to the temp file.
             let body = (try? String(contentsOf: temporaryURL, encoding: .utf8)) ?? ""
-            throw Self.error(status: http.statusCode, body: body, bucket: bucket, response: http)
+            throw Self.error(
+                status: http.statusCode,
+                body: body,
+                bucket: bucket,
+                response: http,
+                signedRegion: endpoint.region
+            )
         }
 
         let manager = FileManager.default
@@ -158,7 +176,7 @@ struct S3RESTClient: Sendable {
         guard var components = URLComponents(url: endpoint.bucketURL(bucket), resolvingAgainstBaseURL: false) else {
             throw S3Error.malformedResponse
         }
-        components.query = "location="
+        components.percentEncodedQuery = "location="
         guard let url = components.url else { throw S3Error.malformedResponse }
 
         let (data, response) = try await perform(method: "GET", url: url, payload: .empty, bucket: bucket)
@@ -170,6 +188,15 @@ struct S3RESTClient: Sendable {
             return "us-east-1"
         }
         return constraint == "EU" ? "eu-west-1" : constraint
+    }
+
+    /// Removes an object. S3 answers 204 whether or not the key existed, so this is
+    /// idempotent by nature — which is what makes it safe for test teardown.
+    func deleteObject(bucket: String, key: String) async throws {
+        guard let url = endpoint.objectURL(bucket: bucket, key: key) else {
+            throw S3Error.malformedResponse
+        }
+        _ = try await perform(method: "DELETE", url: url, payload: .empty, bucket: bucket)
     }
 
     // MARK: - Writes
@@ -425,7 +452,8 @@ struct S3RESTClient: Sendable {
                 status: http.statusCode,
                 body: String(data: data, encoding: .utf8) ?? "",
                 bucket: bucket,
-                response: http
+                response: http,
+                signedRegion: endpoint.region
             )
         }
         return (data, http)
@@ -434,19 +462,51 @@ struct S3RESTClient: Sendable {
     /// Maps S3's status codes and error codes onto errors the UI can say something
     /// useful about. A 301/307 with a region header is the wrong-region case, which is
     /// recoverable by retrying elsewhere rather than a flat failure.
-    static func error(status: Int, body: String, bucket: String?, response: HTTPURLResponse) -> any Error {
+    static func error(
+        status: Int,
+        body: String,
+        bucket: String?,
+        response: HTTPURLResponse,
+        signedRegion: String
+    ) -> any Error {
         let code = S3ErrorXMLParser.code(in: body)
         let region = response.value(forHTTPHeaderField: "x-amz-bucket-region")
 
-        switch (status, code) {
-        case (301, _), (307, _), (_, "PermanentRedirect"), (400, "AuthorizationHeaderMalformed"):
+        // A mismatched `x-amz-bucket-region` means the wrong region, whatever status
+        // came with it — checked first because real S3 does not answer a cross-region
+        // request the way the documentation's redirect examples suggest. Measured
+        // against live S3: a eu-west-1 bucket addressed as us-east-1 comes back **403
+        // with this header**, not a 301. Mapping that on status alone reported it as a
+        // permissions problem and sent you to IAM for a routing issue. This is also
+        // what the AWS SDKs key off to retry.
+        if let region, !region.isEmpty, region != signedRegion {
             return S3Error.wrongRegion(bucket: bucket ?? "", correctRegion: region)
-        case (403, _), (_, "AccessDenied"):
-            return StorageProviderError.dataPlaneForbidden(account: bucket ?? "")
-        case (401, _), (_, "InvalidAccessKeyId"), (_, "SignatureDoesNotMatch"), (_, "ExpiredToken"):
+        }
+
+        // Error *code* is matched before bare status, deliberately. S3 answers 403 for
+        // both "you may not do this" and "your signature is wrong", and collapsing them
+        // sends you hunting through IAM policies for what is actually a client bug.
+        // That misdiagnosis briefly masked a real signing defect during live testing.
+        switch code {
+        case "PermanentRedirect", "AuthorizationHeaderMalformed":
+            return S3Error.wrongRegion(bucket: bucket ?? "", correctRegion: region)
+        case "SignatureDoesNotMatch", "InvalidAccessKeyId", "ExpiredToken", "InvalidToken", "TokenRefreshRequired":
             return StorageProviderError.unauthorized
-        case (404, "NoSuchBucket"):
+        case "AccessDenied":
+            return StorageProviderError.dataPlaneForbidden(account: bucket ?? "")
+        case "NoSuchBucket":
             return S3Error.noSuchBucket(bucket ?? "")
+        default:
+            break
+        }
+
+        switch status {
+        case 301, 307:
+            return S3Error.wrongRegion(bucket: bucket ?? "", correctRegion: region)
+        case 401:
+            return StorageProviderError.unauthorized
+        case 403:
+            return StorageProviderError.dataPlaneForbidden(account: bucket ?? "")
         default:
             return S3Error.httpError(status: status, code: code, message: S3ErrorXMLParser.message(in: body))
         }
