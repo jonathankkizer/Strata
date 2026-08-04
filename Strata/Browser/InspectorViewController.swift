@@ -66,7 +66,20 @@ final class InspectorViewController: NSViewController {
 
         scrollView.documentView = document
         scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
+        // Opaque, and the same colour the browse panes use.
+        //
+        // The window is `.fullSizeContentView` under a translucent unified toolbar, so
+        // every pane extends behind the titlebar and whatever it paints there is what
+        // the toolbar tints against. The browse panes paint `.controlBackgroundColor`;
+        // this one painted nothing, so the toolbar picked up the window backdrop over
+        // the inspector and the control background over the content — a visible seam in
+        // the titlebar that moved with the inspector's width.
+        //
+        // The sidebar is deliberately left transparent: its vibrancy behind the
+        // titlebar is the standard Mac look, and that seam lines up with the toolbar's
+        // sidebar tracking separator.
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .controlBackgroundColor
         scrollView.automaticallyAdjustsContentInsets = true
 
         view = scrollView
