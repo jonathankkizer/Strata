@@ -93,8 +93,36 @@ final class ContainerSidebarViewController: NSViewController, NSOutlineViewDataS
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         scrollView.automaticallyAdjustsContentInsets = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        view = scrollView
+        // The sidebar material, installed explicitly.
+        //
+        // `.sourceList` styling on the outline view doesn't paint a background — it
+        // expects to sit on a sidebar material and draws its rows and selection to suit.
+        // With the scroll view as this controller's root view and `drawsBackground` off,
+        // nothing supplied that material: measured on a running window, every
+        // `NSVisualEffectView` in the hierarchy began to the *right* of the sidebar, so
+        // the sidebar was bare window background and the titlebar above it had nothing
+        // distinct to blend with. That flatness is what made the toolbar read as one
+        // undifferentiated strip.
+        //
+        // `.behindWindow` blending is what makes a sidebar translucent over the desktop,
+        // and following the window's active state is what dims it when the window is
+        // not frontmost — both are what people read as "this is a sidebar".
+        let backdrop = NSVisualEffectView()
+        backdrop.material = .sidebar
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .followsWindowActiveState
+        backdrop.addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: backdrop.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
+        ])
+
+        view = backdrop
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(favoritesChanged), name: .favoritesDidChange, object: nil
