@@ -8,7 +8,7 @@ struct LaunchPlanTests {
     func reconnectWins() {
         #expect(LaunchPlan.decide(
             reconnectOnLaunch: true,
-            lastAccount: "acct",
+            lastAccount: .azure("acct"),
             showWelcomeOnLaunch: true
         ) == .reconnectingBrowser)
     }
@@ -27,7 +27,7 @@ struct LaunchPlanTests {
     func reconnectOffShowsWelcome() {
         #expect(LaunchPlan.decide(
             reconnectOnLaunch: false,
-            lastAccount: "acct",
+            lastAccount: .azure("acct"),
             showWelcomeOnLaunch: true
         ) == .welcome)
     }
@@ -52,7 +52,7 @@ struct LaunchPlanTests {
     func emptyAccountIsNoAccount() {
         #expect(LaunchPlan.decide(
             reconnectOnLaunch: true,
-            lastAccount: "",
+            lastAccount: .azure(""),
             showWelcomeOnLaunch: true
         ) == .welcome)
     }

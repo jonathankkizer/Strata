@@ -69,9 +69,43 @@ These are the functional gaps; several Finder shortcuts are blocked on them.
   for, plus block-level resumption on the upload side.
 
 ### Providers
-- **AWS S3 provider** — currently all stubs. The biggest functional gap; makes the
-  two-cloud premise real. Needs SigV4 signing, ListBuckets / ListObjectsV2,
-  PutObject + multipart upload, and an event-prediction analog.
+**AWS S3** is being built in stages, so the core can absorb a second provider before
+one arrives rather than being retrofitted around it. Done:
+
+- **Core prepared.** `ProviderAccount` (cloud + name) is the unit of identity, with a
+  migration for favorites and preferences saved when Azure was the only option.
+  `ProviderFactory` builds providers, so `connect` no longer names a cloud.
+- **Event prediction generalised.** `UploadPlan` takes an `UploadTarget` and yields a
+  provider-neutral `PredictedWriteEvent`. The S3 analog is real: `PutObject` emits
+  `s3:ObjectCreated:Put` and a multipart upload emits
+  `s3:ObjectCreated:CompleteMultipartUpload`, so a notification filtered to `:Put`
+  silently misses large uploads — the same failure Azure's `data.api` prediction
+  exists to catch.
+- **Credentials.** `AWSCLICredentialProvider` shells out to `aws configure
+  export-credentials`, which runs the whole standard chain (SSO, assume-role,
+  credential_process, static keys). This is why the AWS SDK isn't a dependency: its
+  main draw was that chain. `AWSConfigFile` parses `~/.aws/config` for profile names
+  to populate a picker — names and hints only, never secrets.
+- **Transport.** `SigV4Signer` (pinned to AWS's published `aws4_testsuite` vectors),
+  `S3Endpoint` (virtual-hosted and path-style, custom hosts for MinIO/R2/Backblaze),
+  and `S3RESTClient` — ListBuckets, ListObjectsV2 with continuation paging,
+  HeadObject, GetObject via the shared `DownloadSession`, PutObject, and the multipart
+  trio with abort-on-failure so abandoned parts don't accrue storage charges.
+
+Still to do:
+
+- **Wire `S3Provider`** onto the REST client, so the browse surface can actually open a
+  bucket. The client is not reachable from the UI yet.
+- **Provider picker** in front of the connect sheet, which still enumerates Azure
+  accounts only — the menu item accordingly still says "Connect to Azure Storage
+  Account…".
+- **Per-bucket region resolution** wired into connect: `ListBuckets` is global but
+  object operations are regional, and `S3Error.wrongRegion` carries the correct region
+  specifically so the client can retry rather than fail.
+- **Live verification.** Everything above is covered by unit tests and a stubbed
+  transport; none of it has spoken to a real S3 endpoint. Needs either an AWS account
+  plus `brew install awscli`, or MinIO/LocalStack — the latter also exercises the
+  custom-endpoint path, which is a feature in its own right.
 
 ### Event-awareness (the differentiator — v2)
 - Match the predicted `data.api` against the account's **actual Event Grid

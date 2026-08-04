@@ -26,7 +26,7 @@ struct UploadPlanningTests {
         let content = Data("hello world".utf8)
         try content.write(to: fileURL)
 
-        let results = UploadPlanning.expand(urls: [fileURL], prefix: "a/b/")
+        let results = UploadPlanning.expand(urls: [fileURL], prefix: "a/b/", target: .azureBlob(endpoint: .blob))
 
         #expect(results.count == 1)
         let upload = try #require(results.first)
@@ -44,7 +44,7 @@ struct UploadPlanningTests {
         // Minimal JPEG header bytes; UTType only cares about extension here
         try Data([0xFF, 0xD8, 0xFF]).write(to: fileURL)
 
-        let results = UploadPlanning.expand(urls: [fileURL], prefix: "a/b/")
+        let results = UploadPlanning.expand(urls: [fileURL], prefix: "a/b/", target: .azureBlob(endpoint: .blob))
 
         #expect(results.count == 1)
         let upload = try #require(results.first)
@@ -70,7 +70,7 @@ struct UploadPlanningTests {
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: nestedDir.appendingPathComponent("b.png"))
         try Data("junk".utf8).write(to: photosDir.appendingPathComponent(".DS_Store"))
 
-        let results = UploadPlanning.expand(urls: [photosDir], prefix: "a/b/")
+        let results = UploadPlanning.expand(urls: [photosDir], prefix: "a/b/", target: .azureBlob(endpoint: .blob))
 
         let keys = results.map(\.key).sorted()
         #expect(keys == ["a/b/photos/a.jpg", "a/b/photos/nested/b.png"])
@@ -88,7 +88,7 @@ struct UploadPlanningTests {
         let nestedContent = Data(repeating: 0xAB, count: 42)
         try nestedContent.write(to: subDir.appendingPathComponent("file.bin"))
 
-        let results = UploadPlanning.expand(urls: [dir], prefix: "")
+        let results = UploadPlanning.expand(urls: [dir], prefix: "", target: .azureBlob(endpoint: .blob))
         let nested = try #require(results.first { $0.key.hasSuffix("file.bin") })
         #expect(nested.plan.byteCount == Int64(nestedContent.count))
     }
@@ -108,7 +108,7 @@ struct UploadPlanningTests {
         try Data("a".utf8).write(to: looseFile)
 
         // folder key would be "zoo/z.txt", loose file key "aardvark.txt" — sorted: aardvark first
-        let results = UploadPlanning.expand(urls: [folder, looseFile], prefix: "")
+        let results = UploadPlanning.expand(urls: [folder, looseFile], prefix: "", target: .azureBlob(endpoint: .blob))
         let keys = results.map(\.key)
         #expect(keys == keys.sorted())
     }
@@ -123,7 +123,7 @@ struct UploadPlanningTests {
         let fileURL = root.appendingPathComponent("readme.txt")
         try Data("readme".utf8).write(to: fileURL)
 
-        let results = UploadPlanning.expand(urls: [fileURL], prefix: "")
+        let results = UploadPlanning.expand(urls: [fileURL], prefix: "", target: .azureBlob(endpoint: .blob))
 
         #expect(results.count == 1)
         #expect(results[0].key == "readme.txt")
@@ -140,7 +140,7 @@ struct UploadPlanningTests {
         let fileURL = root.appendingPathComponent("data.bin")
         try content.write(to: fileURL)
 
-        let results = UploadPlanning.expand(urls: [fileURL], prefix: "")
+        let results = UploadPlanning.expand(urls: [fileURL], prefix: "", target: .azureBlob(endpoint: .blob))
         let upload = try #require(results.first)
         #expect(upload.plan.byteCount == Int64(content.count))
     }

@@ -1,9 +1,30 @@
 import Foundation
 
 /// Which cloud a provider talks to. New cases (GCS, S3-compatible) slot in here.
-enum ProviderKind: String, Sendable, CaseIterable {
-    case s3 = "Amazon S3"
-    case azureBlob = "Azure Blob Storage"
+///
+/// Raw values are stable slugs, not display strings: they are persisted (in favorites
+/// and the last-connected account), so renaming a product must never invalidate
+/// somebody's saved places. `displayName` is the user-facing text.
+enum ProviderKind: String, Sendable, CaseIterable, Codable {
+    case s3
+    case azureBlob
+
+    var displayName: String {
+        switch self {
+        case .s3: return "Amazon S3"
+        case .azureBlob: return "Azure Blob Storage"
+        }
+    }
+
+    /// What this provider calls the thing that holds objects. Used wherever the UI
+    /// would otherwise have to say "container" at an S3 user or "bucket" at an Azure
+    /// one.
+    var containerNoun: String {
+        switch self {
+        case .s3: return "bucket"
+        case .azureBlob: return "container"
+        }
+    }
 }
 
 /// Provider-agnostic core interface. Concrete providers (S3 over the AWS SDK for
@@ -40,7 +61,16 @@ protocol StorageProvider: Sendable {
     func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
 }
 
-enum StorageProviderError: Error, Sendable {
+extension StorageProvider {
+    /// The account this provider is connected to. Lets code holding only a provider —
+    /// a drag source, a preview-cache key — name the account without a second
+    /// parameter threaded alongside it, and without assuming a cloud.
+    var account: ProviderAccount {
+        ProviderAccount(kind: kind, name: displayName)
+    }
+}
+
+enum StorageProviderError: Error, Sendable, Equatable {
     case notImplemented
     /// Azure: a valid Entra token, but the identity lacks a `Storage Blob Data *`
     /// role. Management-plane roles (Owner/Contributor/Reader) do NOT grant data

@@ -7,8 +7,8 @@ import Foundation
 enum EventPredictionService {
 
     /// v1: deterministic prediction — always available with data-plane access.
-    static func predictedEvent(for plan: UploadPlan) -> BlobWriteAPI {
-        plan.predictedCommitAPI
+    static func predictedEvent(for plan: UploadPlan) -> BlobWriteAPI? {
+        plan.azureCommitAPI
     }
 
     enum FilterMatch: Sendable, Equatable {
@@ -24,7 +24,9 @@ enum EventPredictionService {
     /// is granted on the storage account's system topic.
     static func match(plan: UploadPlan, againstFilter apiFilter: [String]?) -> FilterMatch {
         guard let apiFilter else { return .unknownNoManagementAccess }
-        let emitted = plan.predictedCommitAPI
+        // Event Grid filters are an Azure concept; a non-Azure plan has nothing to
+        // match against, so it is reported as unknown rather than as a miss.
+        guard let emitted = plan.azureCommitAPI else { return .unknownNoManagementAccess }
         return apiFilter.contains(emitted.rawValue)
             ? .willFire
             : .willNotFire(emitted: emitted, filter: apiFilter)

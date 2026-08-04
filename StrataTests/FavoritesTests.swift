@@ -8,21 +8,21 @@ struct FavoriteTests {
 
     @Test("A folder favorite is named for its deepest segment")
     func folderName() {
-        let favorite = Favorite(account: "acct", container: "data", prefix: "raw/2026/")
+        let favorite = Favorite(account: .azure("acct"), container: "data", prefix: "raw/2026/")
         #expect(favorite.displayName == "2026")
         #expect(!favorite.isContainerRoot)
     }
 
     @Test("A container favorite is named for the container")
     func containerName() {
-        let favorite = Favorite(account: "acct", container: "data", prefix: "")
+        let favorite = Favorite(account: .azure("acct"), container: "data", prefix: "")
         #expect(favorite.displayName == "data")
         #expect(favorite.isContainerRoot)
     }
 
     @Test("A custom name wins, and an empty one falls back to the folder")
     func customName() {
-        var favorite = Favorite(account: "acct", container: "data", prefix: "raw/", customName: "Landing zone")
+        var favorite = Favorite(account: .azure("acct"), container: "data", prefix: "raw/", customName: "Landing zone")
         #expect(favorite.displayName == "Landing zone")
         favorite.customName = ""
         #expect(favorite.displayName == "raw")
@@ -30,16 +30,16 @@ struct FavoriteTests {
 
     @Test("Sameness is about the place, not the name")
     func sameness() {
-        let a = Favorite(account: "acct", container: "data", prefix: "raw/", customName: "One")
-        let b = Favorite(account: "acct", container: "data", prefix: "raw/", customName: "Two")
-        let elsewhere = Favorite(account: "other", container: "data", prefix: "raw/")
+        let a = Favorite(account: .azure("acct"), container: "data", prefix: "raw/", customName: "One")
+        let b = Favorite(account: .azure("acct"), container: "data", prefix: "raw/", customName: "Two")
+        let elsewhere = Favorite(account: .azure("other"), container: "data", prefix: "raw/")
         #expect(a.refersToSamePlace(as: b))
         #expect(!a.refersToSamePlace(as: elsewhere))
     }
 
     @Test("A favorite round-trips its location")
     func location() {
-        let favorite = Favorite(account: "acct", location: BrowserLocation(container: "data", prefix: "raw/2026/"))
+        let favorite = Favorite(account: .azure("acct"), location: BrowserLocation(container: "data", prefix: "raw/2026/"))
         #expect(favorite.location == BrowserLocation(container: "data", prefix: "raw/2026/"))
     }
 }
@@ -60,7 +60,7 @@ struct FavoritesStoreTests {
         try body(FavoritesStore(defaults: defaults), defaults)
     }
 
-    private func favorite(_ prefix: String, account: String = "acct") -> Favorite {
+    private func favorite(_ prefix: String, account: ProviderAccount = .azure("acct")) -> Favorite {
         Favorite(account: account, container: "data", prefix: prefix)
     }
 
@@ -83,8 +83,8 @@ struct FavoritesStoreTests {
     @Test("The same folder in a different account is a different place")
     func perAccount() {
         withStore { store, _ in
-            #expect(store.add(favorite("raw/", account: "one")))
-            #expect(store.add(favorite("raw/", account: "two")))
+            #expect(store.add(favorite("raw/", account: .azure("one"))))
+            #expect(store.add(favorite("raw/", account: .azure("two"))))
             #expect(store.favorites.count == 2)
         }
     }
@@ -93,9 +93,9 @@ struct FavoritesStoreTests {
     func contains() {
         withStore { store, _ in
             store.add(favorite("raw/"))
-            #expect(store.contains(account: "acct", location: BrowserLocation(container: "data", prefix: "raw/")))
-            #expect(!store.contains(account: "acct", location: BrowserLocation(container: "data", prefix: "cooked/")))
-            #expect(!store.contains(account: "other", location: BrowserLocation(container: "data", prefix: "raw/")))
+            #expect(store.contains(account: .azure("acct"), location: BrowserLocation(container: "data", prefix: "raw/")))
+            #expect(!store.contains(account: .azure("acct"), location: BrowserLocation(container: "data", prefix: "cooked/")))
+            #expect(!store.contains(account: .azure("other"), location: BrowserLocation(container: "data", prefix: "raw/")))
         }
     }
 
@@ -199,7 +199,7 @@ struct LocationDragTests {
         let board = NSPasteboard(name: NSPasteboard.Name("com.kizersolutions.strata.tests.drag"))
         board.clearContents()
         let drag = LocationDrag(
-            account: "acct",
+            account: .azure("acct"),
             location: BrowserLocation(container: "data", prefix: "raw/2026/")
         )
         #expect(board.writeObjects([drag.pasteboardItem()]))
@@ -217,7 +217,7 @@ struct LocationDragTests {
         board.clearContents()
         let id = UUID()
         let drag = LocationDrag(
-            account: "acct",
+            account: .azure("acct"),
             location: BrowserLocation(container: "data", prefix: ""),
             favoriteID: id
         )

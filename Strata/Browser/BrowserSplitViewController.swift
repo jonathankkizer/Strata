@@ -162,7 +162,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
     // MARK: - Actions
 
-    @objc func connectAzureStorageAccount(_ sender: Any?) {
+    @objc func connectStorageAccount(_ sender: Any?) {
         // The account picker enumerates via the management plane, which is a
         // different token audience than the blob data plane we browse with.
         let managementToken = AzureCLITokenProvider(
@@ -172,7 +172,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
         let picker = ConnectAccountViewController(
             loader: { try await management.listAllStorageAccounts() },
-            onConnect: { [weak self] account in self?.connect(account: account) },
+            // The picker enumerates Azure storage accounts specifically, so whatever it
+            // returns is an Azure account by construction. A provider chooser in front
+            // of this sheet is a later stage.
+            onConnect: { [weak self] account in self?.connect(account: .azure(account)) },
             onCancel: {}
         )
         presentAsSheet(picker)
@@ -274,7 +277,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 menuItem.title = collapsed ? "Show Inspector" : "Hide Inspector"
             }
             return true
-        case #selector(connectAzureStorageAccount(_:)):
+        case #selector(connectStorageAccount(_:)):
             return true
         case #selector(goBack(_:)):
             return history.canGoBack
@@ -285,8 +288,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         case #selector(paste(_:)):
             return provider != nil && content.location != nil && !Self.fileURLsOnPasteboard().isEmpty
         case #selector(addToSidebar(_:)):
-            guard let account = accountName ?? provider?.displayName,
-                  let location = favoritableLocation() else { return false }
+            guard let account, let location = favoritableLocation() else { return false }
             // Disabled rather than silently making a second copy of the same place.
             return !FavoritesStore.shared.contains(account: account, location: location)
         default:
@@ -297,10 +299,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     // MARK: - Upload
 
     private func startUpload(sources urls: [URL], to location: BrowserLocation) {
+        guard let provider else { NSSound.beep(); return }
         Task { @MainActor in
             let prefix = location.prefix
+            // Resolved here, on the main actor, so the detached expansion captures a
+            // plain value rather than reaching back for the provider.
+            let target = UploadTarget.default(for: provider.kind)
             let planned = await Task.detached(priority: .userInitiated) {
-                UploadPlanning.expand(urls: urls, prefix: prefix)
+                UploadPlanning.expand(urls: urls, prefix: prefix, target: target)
             }.value
             guard !planned.isEmpty else { NSSound.beep(); return }
             if StrataDefaults.askBeforeUploading {
@@ -483,7 +489,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             object: object,
             container: StorageContainer(name: containerName),
             provider: provider,
-            account: accountName ?? provider.displayName,
+            account: provider.account.id,
             openingPanel: true
         )
     }
@@ -502,7 +508,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             object: object,
             container: StorageContainer(name: containerName),
             provider: provider,
-            account: accountName ?? provider.displayName,
+            account: provider.account.id,
             openingPanel: false
         )
     }
@@ -510,20 +516,23 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     // MARK: - Window title
 
     /// The connected account, used as the window subtitle.
-    private var accountName: String?
+    private var account: ProviderAccount?
 
     /// Titles the window with the folder in view and subtitles it with the account
     /// and full path — so several open windows are told apart in the Window menu.
     private func updateWindowTitle(for location: BrowserLocation?) {
         guard let window = view.window else { return }
         guard let location else {
-            window.title = accountName ?? "Strata"
-            window.subtitle = accountName == nil ? "" : ProviderKind.azureBlob.rawValue
+            window.title = account?.name ?? "Strata"
+            // The provider stands in for a path before one exists — and now that there
+            // can be more than one, it has to come from the connection rather than
+            // being hardcoded to Azure.
+            window.subtitle = account?.kind.displayName ?? ""
             return
         }
         window.title = location.segments.last ?? location.container
         let path = ([location.container] + location.segments).joined(separator: "/")
-        window.subtitle = accountName.map { "\($0) — \(path)" } ?? path
+        window.subtitle = account.map { "\($0.name) — \(path)" } ?? path
     }
 
     // MARK: - Go
@@ -581,8 +590,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     /// ⌃⌘T — save the selected folder, or the folder in view when nothing is selected.
     /// Finder's command, shortcut, and fallback behaviour.
     @objc func addToSidebar(_ sender: Any?) {
-        guard let account = accountName ?? provider?.displayName,
-              let location = favoritableLocation() else {
+        guard let account, let location = favoritableLocation() else {
             NSSound.beep()
             return
         }
@@ -612,7 +620,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
     /// Jump to a saved place, reconnecting first when it belongs to another account.
     func goToFavorite(_ favorite: Favorite) {
-        guard favorite.account == (accountName ?? provider?.displayName), provider != nil else {
+        // Compares the whole account, provider included — two clouds can each have an
+        // account called "prod", and jumping to the wrong one would be worse than
+        // reconnecting unnecessarily.
+        guard favorite.account == account, provider != nil else {
             pendingRestoreLocation = favorite.location
             connect(account: favorite.account)
             return
@@ -659,19 +670,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
 
     // MARK: - Connect
 
-    func connect(account: String) {
-        let endpoint = AzureStorageEndpoint(account: account)
-        let provider = AzureBlobProvider(
-            displayName: account,
-            endpoint: endpoint,
-            tokenSource: AzureCLITokenProvider()
-        )
+    func connect(account: ProviderAccount) {
+        let provider = ProviderFactory.make(for: account)
         self.provider = provider
         content.provider = provider
         content.location = nil
         sidebar.setContainers([])
-        content.showMessage("Loading containers from \(account)…")
-        accountName = account
+        content.showMessage("Loading \(account.kind.containerNoun)s from \(account.name)…")
+        self.account = account
         sidebar.currentAccount = account
         updateWindowTitle(for: nil)
         // Locations from a previous account are meaningless in this one.
@@ -693,15 +699,28 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                     self.pendingRestoreLocation = nil
                     self.sidebar.select(first)
                 } else {
-                    self.content.showMessage("No containers in “\(account).”")
+                    self.content.showMessage("No \(account.kind.containerNoun)s in “\(account.name).”")
                 }
-            } catch StorageProviderError.dataPlaneForbidden(let account) {
-                self.content.showMessage("Authenticated, but this identity lacks a “Storage Blob Data” role on “\(account).”\n\nManagement roles (Owner/Contributor/Reader) don’t grant data-plane access.")
+            } catch StorageProviderError.dataPlaneForbidden(let name) {
+                self.content.showMessage("Authenticated, but this identity lacks a “Storage Blob Data” role on “\(name).”\n\nManagement roles (Owner/Contributor/Reader) don’t grant data-plane access.")
             } catch StorageProviderError.unauthorized {
-                self.content.showMessage("Not authorized. Check that `az login` has a session for the account’s tenant.")
+                self.content.showMessage(Self.unauthorizedMessage(for: account.kind))
+            } catch StorageProviderError.notImplemented {
+                self.content.showMessage("\(account.kind.displayName) support isn’t finished yet.")
             } catch {
-                self.content.showMessage("Couldn’t connect to “\(account).”\n\n\(error.localizedDescription)")
+                self.content.showMessage("Couldn’t connect to “\(account.name).”\n\n\(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Each provider's sign-in lives in its own CLI, so "not authorized" has a
+    /// different remedy depending on which one it is.
+    private static func unauthorizedMessage(for kind: ProviderKind) -> String {
+        switch kind {
+        case .azureBlob:
+            return "Not authorized. Check that `az login` has a session for the account’s tenant."
+        case .s3:
+            return "Not authorized. Check that this profile's credentials are valid — for an SSO profile, `aws sso login` may need running again."
         }
     }
 }

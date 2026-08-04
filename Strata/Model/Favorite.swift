@@ -8,7 +8,7 @@ import Foundation
 /// rather than only being useful inside the session that created it.
 struct Favorite: Codable, Sendable, Equatable, Identifiable {
     var id: UUID
-    var account: String
+    var account: ProviderAccount
     var container: String
     var prefix: String
     /// A favorite is a bookmark, not the folder, so it may be renamed freely. Nil
@@ -17,7 +17,7 @@ struct Favorite: Codable, Sendable, Equatable, Identifiable {
 
     init(
         id: UUID = UUID(),
-        account: String,
+        account: ProviderAccount,
         container: String,
         prefix: String,
         customName: String? = nil
@@ -29,7 +29,7 @@ struct Favorite: Codable, Sendable, Equatable, Identifiable {
         self.customName = customName
     }
 
-    init(id: UUID = UUID(), account: String, location: BrowserLocation, customName: String? = nil) {
+    init(id: UUID = UUID(), account: ProviderAccount, location: BrowserLocation, customName: String? = nil) {
         self.init(
             id: id,
             account: account,
@@ -57,5 +57,35 @@ struct Favorite: Codable, Sendable, Equatable, Identifiable {
     /// point at the same folder, whatever they are called.
     func refersToSamePlace(as other: Favorite) -> Bool {
         account == other.account && container == other.container && prefix == other.prefix
+    }
+}
+
+// MARK: - Migration
+
+extension Favorite {
+
+    private enum CodingKeys: String, CodingKey {
+        case id, account, container, prefix, customName
+    }
+
+    /// Favorites saved before S3 support stored `account` as a bare string, because
+    /// Azure was the only provider. Decoding those into `ProviderAccount` has to be
+    /// tolerant of both shapes, and the failure mode if it isn't is the worst kind:
+    /// `FavoritesStore.load` decodes the whole array with `try?`, so one unreadable
+    /// entry would silently take every saved place with it.
+    ///
+    /// A legacy entry can only have been Azure, so that's what it becomes.
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        container = try values.decode(String.self, forKey: .container)
+        prefix = try values.decode(String.self, forKey: .prefix)
+        customName = try values.decodeIfPresent(String.self, forKey: .customName)
+
+        if let account = try? values.decode(ProviderAccount.self, forKey: .account) {
+            self.account = account
+        } else {
+            self.account = .azure(try values.decode(String.self, forKey: .account))
+        }
     }
 }

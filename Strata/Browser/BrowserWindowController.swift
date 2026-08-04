@@ -145,7 +145,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
                 id: itemIdentifier,
                 label: "Connect",
                 symbol: "externaldrive.badge.plus",
-                action: #selector(BrowserSplitViewController.connectAzureStorageAccount(_:))
+                action: #selector(BrowserSplitViewController.connectStorageAccount(_:))
             )
         case ToolbarID.refresh:
             return toolbarButton(
