@@ -92,16 +92,21 @@ one arrives rather than being retrofitted around it. Done:
   HeadObject, GetObject via the shared `DownloadSession`, PutObject, and the multipart
   trio with abort-on-failure so abandoned parts don't accrue storage charges.
 
+- **Wired up and reachable.** `S3Provider` sits on the REST client, the connect sheet
+  has a provider switcher (Azure accounts from Resource Manager, S3 profiles from
+  `~/.aws/config`), and the sidebar says "Buckets" rather than "Containers" when
+  connected to S3. Per-bucket regions are learned lazily: the profile's region is tried
+  first, and a bucket living elsewhere is found by taking S3's correction and retrying
+  once, then remembered for the session — so no `GetBucketLocation` round trip before
+  every first use.
+
 Still to do:
 
-- **Wire `S3Provider`** onto the REST client, so the browse surface can actually open a
-  bucket. The client is not reachable from the UI yet.
-- **Provider picker** in front of the connect sheet, which still enumerates Azure
-  accounts only — the menu item accordingly still says "Connect to Azure Storage
-  Account…".
-- **Per-bucket region resolution** wired into connect: `ListBuckets` is global but
-  object operations are regional, and `S3Error.wrongRegion` carries the correct region
-  specifically so the client can retry rather than fail.
+- **Delete/rename through the provider protocol.** `S3RESTClient.deleteObject` exists
+  but `StorageProvider` has no delete, so teardown in tests goes through the client
+  directly.
+- **S3-specific inspector detail** — storage class transitions, restore state for
+  Glacier objects.
 - ~~**Live verification.**~~ **Done** — `StrataTests/S3IntegrationTests.swift` runs
   against real S3, covering listing, paging, awkward keys, metadata, download with
   progress, PutObject round-trip, multipart, delete, region resolution, and path-style

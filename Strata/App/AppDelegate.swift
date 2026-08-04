@@ -38,7 +38,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if !hasVisibleWindows && browserWindowControllers.isEmpty {
-            openInitialWindow()
+            // SMOKE
+        do {
+            let sheet = ConnectAccountViewController(loader: { _ in [] }, onConnect: { _ in }, onCancel: {})
+            sheet.loadViewIfNeeded()
+            let profiles = AWSConfigFile.profilesOnDisk()
+            let s3 = ProviderFactory.make(for: .s3(profile: profiles.first?.name ?? "default"))
+            FileHandle.standardError.write(Data("SMOKE: sheet built, subviews=\(sheet.view.subviews.count) profiles=\(profiles.map(\.name)) s3kind=\(s3.kind.rawValue) s3name=\(s3.displayName)\n".utf8))
+        }
+        openInitialWindow()
         }
         return true
     }
