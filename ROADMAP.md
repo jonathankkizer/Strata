@@ -11,7 +11,8 @@ Working today (Azure Blob Storage only):
   with a manual-entry fallback.
 - **Browse** in a sortable List view or a Finder-style **Columns** (Miller) view,
   with a bottom path bar, an object inspector/preview pane, and full keyboard
-  navigation.
+  navigation. Columns swipe sideways as one strip and resize by dragging the divider
+  between them (Option for all of them, double-click to fit the longest name).
 - **Sort** by Name, Kind, Date Modified, Size, or Tier — from column headers, the
   right-click menu, or View ▸ Sort By.
 - **Upload** (File ▸ Upload… or drag-and-drop, including folders) as streaming,
