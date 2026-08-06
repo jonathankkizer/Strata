@@ -91,6 +91,11 @@ final class ContainerSidebarViewController: NSViewController, NSOutlineViewDataS
 
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true
+        // A scroller only when there is something to scroll to. Without this the bar
+        // sits there permanently for anyone running "Always show scroll bars" — a
+        // handful of favourites in a full-height sidebar has nothing to scroll, and a
+        // scroller that can't move is just a stripe down the edge of the app.
+        scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.automaticallyAdjustsContentInsets = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false

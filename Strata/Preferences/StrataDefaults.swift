@@ -32,6 +32,16 @@ enum StrataDefaults {
         set { UserDefaults.standard.set(newValue, forKey: browseModeKey) }
     }
 
+    private static let columnWidthKey = "BrowseColumnWidth"
+
+    /// How wide a column in the Columns view opens. Set by dragging a column's trailing
+    /// divider, so the width the user settled on is the width the next column — and the
+    /// next launch — starts at.
+    static var columnWidth: CGFloat {
+        get { ColumnLayout.restored(CGFloat(UserDefaults.standard.double(forKey: columnWidthKey))) }
+        set { UserDefaults.standard.set(Double(ColumnLayout.clamp(newValue)), forKey: columnWidthKey) }
+    }
+
     private static let sortKeyKey = "BrowseSortKey"
     private static let sortAscendingKey = "BrowseSortAscending"
 

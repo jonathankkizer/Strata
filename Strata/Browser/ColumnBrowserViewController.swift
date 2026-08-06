@@ -1,5 +1,103 @@
 import AppKit
 
+// MARK: - ColumnScrollView
+
+/// A single column's scroll area, which scrolls vertically only.
+///
+/// An `NSScrollView` claims every scroll event it receives, including the horizontal
+/// axis it has nothing to do with. Nested inside the strip of columns that does scroll
+/// horizontally, that meant a two-finger swipe sideways landed on whichever column the
+/// pointer happened to be over and went nowhere, leaving the scroller at the bottom of
+/// the window as the only way to move between columns. The Finder swipes.
+///
+/// So a scroll whose dominant axis is horizontal is handed to the enclosing scroll view
+/// instead, with `ScrollAxisLatch` holding that choice steady for the whole gesture.
+private final class ColumnScrollView: NSScrollView {
+
+    private var latch = ScrollAxisLatch()
+
+    override func scrollWheel(with event: NSEvent) {
+        if latch.route(Self.step(for: event)), let enclosing = enclosingScrollView {
+            enclosing.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
+
+    private static func step(for event: NSEvent) -> ScrollAxisLatch.Step {
+        let phase = event.phase
+        if phase.contains(.began) || phase.contains(.mayBegin) {
+            return .begins(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
+        }
+        if phase.contains(.ended) || phase.contains(.cancelled) {
+            return .ends
+        }
+        // A phaseless event with no momentum behind it is a discrete wheel notch (or a
+        // shift-wheel). Momentum events belong to the gesture that threw them.
+        if phase.isEmpty && event.momentumPhase.isEmpty {
+            return .standalone(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY)
+        }
+        return .continues
+    }
+}
+
+// MARK: - ColumnDividerView
+
+/// The grab area on a column's trailing edge. Dragging it resizes the column, so a long
+/// name can be read without leaving Columns view — the Finder's affordance, in the
+/// Finder's place.
+@MainActor
+private final class ColumnDividerView: NSView {
+
+    var onDragBegan: (() -> Void)?
+    /// Live drag: the horizontal distance from where the drag started, and whether the
+    /// user is holding Option to resize every column at once.
+    var onDrag: ((CGFloat, Bool) -> Void)?
+    var onDragEnded: (() -> Void)?
+    /// Double-click: size to fit the longest name, all columns when Option is held.
+    var onSizeToFit: ((Bool) -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,   // ignored, `.inVisibleRect` keeps it in step with scrolling
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.resizeLeftRight.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let resizeAll = event.modifierFlags.contains(.option)
+
+        if event.clickCount == 2 {
+            onSizeToFit?(resizeAll)
+            return
+        }
+
+        guard let window else { return }
+        let start = event.locationInWindow
+        onDragBegan?()
+
+        // Track in window coordinates: this view moves as the column it belongs to
+        // resizes, so its own coordinate space shifts under the pointer mid-drag.
+        window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: NSEvent.foreverDuration, mode: .eventTracking) { tracked, stop in
+            // A nil event means tracking was torn down out from under us; end the drag
+            // there too, so nothing is left holding state from a gesture that's over.
+            guard let tracked, tracked.type != .leftMouseUp else {
+                stop.pointee = true
+                self.onDragEnded?()
+                return
+            }
+            self.onDrag?(tracked.locationInWindow.x - start.x, resizeAll)
+        }
+    }
+}
+
 // MARK: - BrowseColumn
 
 /// One column in the Miller columns browser: a fixed-width pane listing the
@@ -11,9 +109,11 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     let containerView: NSView
 
     private let tableView = KeyNavTableView()
-    private let scrollView = NSScrollView()
+    private let scrollView = ColumnScrollView()
     private let spinner = NSProgressIndicator()
     private let emptyLabel = NSTextField(labelWithString: "")
+    private let divider = ColumnDividerView()
+    private var widthConstraint: NSLayoutConstraint!
 
     var items: [StorageObject] = []
     var loadToken = 0
@@ -34,6 +134,35 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     var makePromise: ((StorageObject) -> BlobFilePromiseProvider?)?
     /// Builds the sidebar drag payload for a folder (provider-supplied).
     var makeLocationDrag: ((StorageObject) -> NSPasteboardItem?)?
+    /// The trailing divider was grabbed — the widths as they stand now are what the
+    /// drag's deltas are measured against.
+    var onResizeBegan: (() -> Void)?
+    /// The trailing divider is being dragged: distance from the drag's start, and
+    /// whether Option is held to move every column together.
+    var onResize: ((CGFloat, Bool) -> Void)?
+    /// The divider was released — the width the user settled on is now the default.
+    var onResizeEnded: (() -> Void)?
+    /// The divider was double-clicked: fit the longest name, or all columns' names.
+    var onSizeToFit: ((Bool) -> Void)?
+
+    /// The column's content width, excluding its trailing separator.
+    var width: CGFloat = ColumnLayout.defaultWidth {
+        didSet {
+            guard width != oldValue else { return }
+            widthConstraint.constant = width + ColumnLayout.separatorWidth
+        }
+    }
+
+    /// How wide this column would have to be for its longest name to fit, measured
+    /// against the font the rows actually draw in.
+    var widthToFitContents: CGFloat {
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let longest = items.reduce(CGFloat.zero) { widest, item in
+            let name = displayName(for: item) as NSString
+            return max(widest, name.size(withAttributes: [.font: font]).width)
+        }
+        return ColumnLayout.widthToFit(longestNameWidth: longest)
+    }
 
     /// Make this column's table the first responder (used by ←/→ navigation).
     func focus() {
@@ -65,8 +194,9 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         return items[row]
     }
 
-    init(location: BrowserLocation) {
+    init(location: BrowserLocation, width: CGFloat) {
         self.location = location
+        self.width = ColumnLayout.clamp(width)
         containerView = NSView()
         super.init()
         buildView()
@@ -160,14 +290,27 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
 
+        // The grab area straddles the hairline, sitting on top of it so it hit-tests
+        // first. It reaches back into this column rather than over into the next: a
+        // subview outside its superview's bounds is not reliably hit-tested.
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.onDragBegan = { [weak self] in self?.onResizeBegan?() }
+        divider.onDrag = { [weak self] delta, all in self?.onResize?(delta, all) }
+        divider.onDragEnded = { [weak self] in self?.onResizeEnded?() }
+        divider.onSizeToFit = { [weak self] all in self?.onSizeToFit?(all) }
+
         containerView.addSubview(scrollView)
         containerView.addSubview(spinner)
         containerView.addSubview(emptyLabel)
         containerView.addSubview(separator)
+        containerView.addSubview(divider)
+
+        widthConstraint = containerView.widthAnchor.constraint(
+            equalToConstant: width + ColumnLayout.separatorWidth
+        )
 
         NSLayoutConstraint.activate([
-            // Fixed column width.
-            containerView.widthAnchor.constraint(equalToConstant: 261),  // 260 content + 1 separator
+            widthConstraint,
 
             scrollView.topAnchor.constraint(equalTo: containerView.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
@@ -185,7 +328,12 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
             separator.topAnchor.constraint(equalTo: containerView.topAnchor),
             separator.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            separator.widthAnchor.constraint(equalToConstant: 1),
+            separator.widthAnchor.constraint(equalToConstant: ColumnLayout.separatorWidth),
+
+            divider.topAnchor.constraint(equalTo: containerView.topAnchor),
+            divider.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            divider.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 6),
         ])
     }
 
@@ -445,6 +593,10 @@ final class ColumnBrowserViewController: NSViewController {
         outerScrollView.hasHorizontalScroller = true
         outerScrollView.hasVerticalScroller = false
         outerScrollView.autohidesScrollers = true
+        // Narrow columns can leave the strip shorter than the pane. That gap is the
+        // outer scroll view's own background, so it paints what the columns paint.
+        outerScrollView.drawsBackground = true
+        outerScrollView.backgroundColor = .controlBackgroundColor
         outerScrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // Horizontal stack that grows rightward; each column manages its own width.
@@ -595,7 +747,9 @@ final class ColumnBrowserViewController: NSViewController {
 
     @discardableResult
     private func addColumn(at location: BrowserLocation) -> BrowseColumn {
-        let col = BrowseColumn(location: location)
+        // A new column opens at whatever width the user last settled on, so navigating
+        // deeper doesn't snap back to a default they've already rejected.
+        let col = BrowseColumn(location: location, width: StrataDefaults.columnWidth)
         columns.append(col)
         stackView.addArrangedSubview(col.containerView)
 
@@ -637,7 +791,63 @@ final class ColumnBrowserViewController: NSViewController {
                 provider: provider
             )
         }
+        col.onResizeBegan = { [weak self] in self?.beginResize() }
+        col.onResize = { [weak self, weak col] delta, all in
+            guard let self, let col else { return }
+            self.resize(col, by: delta, resizingAll: all)
+        }
+        col.onResizeEnded = { [weak self, weak col] in
+            guard let self, let col else { return }
+            self.finishResize(settledAt: col.width)
+        }
+        col.onSizeToFit = { [weak self, weak col] all in
+            guard let self, let col else { return }
+            self.sizeToFit(col, resizingAll: all)
+        }
         return col
+    }
+
+    // MARK: - Column widths
+
+    /// Widths as they stood when the current drag began. Deltas are applied to these
+    /// rather than accumulated, so a drag that hits the minimum and comes back lands
+    /// where the pointer is instead of trailing behind it.
+    private var resizeBaseline: [CGFloat] = []
+
+    private func beginResize() {
+        resizeBaseline = columns.map(\.width)
+    }
+
+    /// Live resize from a divider drag. Without Option only the dragged column moves;
+    /// with it every column matches, which is how the Finder offers "all of them".
+    private func resize(_ col: BrowseColumn, by delta: CGFloat, resizingAll: Bool) {
+        guard let index = columns.firstIndex(where: { $0 === col }),
+              resizeBaseline.indices.contains(index) else { return }
+        let target = ColumnLayout.clamp(resizeBaseline[index] + delta)
+        for column in (resizingAll ? columns : [col]) { column.width = target }
+        layoutColumns()
+    }
+
+    private func finishResize(settledAt width: CGFloat) {
+        resizeBaseline = []
+        StrataDefaults.columnWidth = width
+    }
+
+    /// Double-click: widen (or narrow) to exactly what the names need. With Option every
+    /// column fits its *own* longest name — the Finder's "right size all columns" —
+    /// rather than all of them adopting the clicked column's width.
+    private func sizeToFit(_ col: BrowseColumn, resizingAll: Bool) {
+        for column in (resizingAll ? columns : [col]) {
+            column.width = column.widthToFitContents
+        }
+        layoutColumns()
+        StrataDefaults.columnWidth = col.width
+    }
+
+    /// Flush the constraint change immediately: a resize that only lands on the next
+    /// pass through the run loop reads as lag against the pointer.
+    private func layoutColumns() {
+        stackView.layoutSubtreeIfNeeded()
     }
 
     // MARK: - Selection (for Download)

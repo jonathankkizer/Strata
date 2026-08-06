@@ -66,6 +66,8 @@ final class InspectorViewController: NSViewController {
 
         scrollView.documentView = document
         scrollView.hasVerticalScroller = true
+        // Same rule as the sidebar: no scroller until the content overflows.
+        scrollView.autohidesScrollers = true
         // Opaque, and the same colour the browse panes use.
         //
         // The window is `.fullSizeContentView` under a translucent unified toolbar, so
