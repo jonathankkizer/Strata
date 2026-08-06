@@ -275,6 +275,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             return provider != nil && content.location != nil
         case #selector(downloadSelection(_:)), #selector(downloadSelectionTo(_:)):
             return provider != nil && !content.downloadableSelection.isEmpty
+        case #selector(deleteSelection(_:)):
+            // Folders count here, unlike Download — deleting a prefix is meaningful even
+            // though downloading one is not yet.
+            return provider != nil && !content.selection.isEmpty
         case #selector(toggleQuickLook(_:)):
             if let menuItem = item as? NSMenuItem {
                 menuItem.title = quickLook.isPreviewing ? "Close Quick Look" : "Quick Look"
@@ -397,6 +401,51 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     /// Always ask where to put it — Safari's "Download Linked File As…".
     @objc func downloadSelectionTo(_ sender: Any?) {
         startDownload(askWhereToSave: true)
+    }
+
+    // MARK: - Delete
+
+    /// ⌘⌫. Unlike Download, this acts on folders too: a folder is a prefix, and the
+    /// sheet expands it before asking.
+    @objc func deleteSelection(_ sender: Any?) {
+        let selection = content.selection
+        guard let provider, let containerName = content.selectedContainerName, !selection.isEmpty else {
+            NSSound.beep()
+            return
+        }
+
+        let sheet = DeleteConfirmationViewController(
+            selection: selection,
+            container: StorageContainer(name: containerName),
+            provider: provider
+        ) { [weak self] outcome in
+            guard let self, case let .deleted(failures) = outcome else { return }
+            // Refresh whatever the outcome: a partly-failed delete still removed things,
+            // and a listing that still shows them is worse than the failure itself.
+            self.content.reload()
+            if !failures.isEmpty { self.reportDeletionFailures(failures) }
+        }
+        presentAsSheet(sheet)
+    }
+
+    private func reportDeletionFailures(_ failures: [DeletionFailure]) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = failures.count == 1
+            ? "One object couldn\u{2019}t be deleted."
+            : "\(failures.count) objects couldn\u{2019}t be deleted."
+        // Name the keys rather than only counting them: which ones survived is the
+        // thing the user has to act on. Capped, because a listing of hundreds in an
+        // alert helps nobody.
+        let named = failures.prefix(5).map { "\($0.key) — \($0.message)" }
+        let more = failures.count > named.count ? "\n\u{2026}and \(failures.count - named.count) more." : ""
+        alert.informativeText = named.joined(separator: "\n") + more
+        alert.addButton(withTitle: "OK")
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 
     private func startDownload(askWhereToSave: Bool) {

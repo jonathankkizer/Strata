@@ -28,6 +28,11 @@ Working today (Azure Blob Storage only):
   (so ⌘V in the Finder downloads the blob) alongside its path and URL, and ⌘V here
   uploads files copied from the Finder.
 - **Go**: Back / Forward (⌘[ / ⌘]), Enclosing Folder (⌘↑), and Go to Folder… (⇧⌘G).
+- **Delete** (File ▸ Delete… ⌘⌫), for objects and whole folders. The confirmation
+  expands a folder first so it can say how many objects will really go, and asks the
+  account whether the delete is reversible — Azure soft delete, S3 versioning, or
+  neither — rather than warning "this cannot be undone" at someone whose bucket has
+  kept every version for a year.
 - **Favorites**: a Finder-style Favorites section above Containers in the sidebar.
   Add with ⌃⌘T or by dragging a folder onto it, reorder by dragging, rename in
   place, jump from the Go menu with ⌃⌘1…9 — and drop files onto a saved place to
@@ -46,16 +51,22 @@ Working today (Azure Blob Storage only):
 
 ### Read / write operations
 These are the functional gaps; several Finder shortcuts are blocked on them.
-- **Delete** (⌘⌫) — with confirmation.
 - **Rename** (Return) — implemented as copy + delete (blob storage has no native
-  rename).
+  rename). The delete half now exists.
+- **Batch delete on S3.** Deletes go one key at a time on both clouds, which buys
+  honest progress and per-key failures at the cost of a round trip each. S3's
+  `DeleteObjects` would collapse a thousand keys into one request; Azure has no
+  equivalent worth the complexity, so this would make the two paths diverge.
 - **Metadata editing** — edit `x-ms-meta-*` and content type.
 - **Find / filter** (⌘F) — filter the current listing.
 - **Recursive folder download** — dragging a prefix out to the Finder is
   deliberately not offered until this exists, rather than promising a directory the
   app cannot produce.
-- **Undo** — nothing registers an undo action today. Delete and rename will need it;
-  the skill's guidance is to prefer undo over a confirmation sheet.
+- **Undo** — nothing registers an undo action today. The skill's guidance is to
+  prefer undo over a confirmation sheet, and delete deliberately does not follow it:
+  there is nothing to undo *to* in object storage, so the sheet reports what the
+  account will actually do instead of promising a reversal Strata cannot perform.
+  Rename, which is a copy followed by a delete, could genuinely be undone.
 
 ### Quick Look
 - **Progress for a slow preview**: a Quick Look fetch is silent, so a large blob on a
@@ -103,9 +114,16 @@ one arrives rather than being retrofitted around it. Done:
 
 Still to do:
 
-- **Delete/rename through the provider protocol.** `S3RESTClient.deleteObject` exists
-  but `StorageProvider` has no delete, so teardown in tests goes through the client
-  directly.
+- ~~**Delete through the provider protocol.**~~ **Done** — `StorageProvider` has
+  `delete`, `listAllKeys` and `deletionRecovery`, implemented on both clouds. Rename
+  is still open.
+- **`GetBucketLocation` uses a regional endpoint.** `S3RESTClient.bucketRegion` signs
+  for the configured region, and live S3 now answers a cross-region call with an error
+  carrying no `x-amz-bucket-region`, so it resolves to `wrongRegion(correctRegion: nil)`
+  — the live test `Resolves a bucket's real region` fails on this. No user impact:
+  nothing in the app calls it, because `S3Provider` learns regions from the failures of
+  real operations instead. The fix is to address the global `s3.amazonaws.com` endpoint,
+  which is what the AWS CLI does for this one call.
 - **S3-specific inspector detail** — storage class transitions, restore state for
   Glacier objects.
 - ~~**Live verification.**~~ **Done** — `StrataTests/S3IntegrationTests.swift` runs

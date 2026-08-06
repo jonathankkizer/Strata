@@ -163,6 +163,12 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         menu.addItem(downloadItem)
         menu.addItem(downloadToItem)
         menu.addItem(.separator())
+        // Its own section, below the reads and above the copies: it is the one command
+        // here that changes what is in the account.
+        let deleteItem = NSMenuItem(title: "Delete\u{2026}", action: #selector(BrowserSplitViewController.deleteSelection(_:)), keyEquivalent: "")
+        deleteItem.target = nil   // routed via the responder chain
+        menu.addItem(deleteItem)
+        menu.addItem(.separator())
         let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyName(_:)), keyEquivalent: "")
         copyNameItem.target = self
         let copyPathItem = NSMenuItem(title: "Copy Path", action: #selector(copyPath(_:)), keyEquivalent: "")
@@ -736,7 +742,10 @@ extension ObjectListViewController: NSMenuDelegate {
                     forAction: #selector(BrowserSplitViewController.addToSidebar(_:)), to: nil, from: item
                 ) as? any NSUserInterfaceValidations
                 item.isEnabled = handler?.validateUserInterfaceItem(item) ?? false
-            case #selector(copyName(_:)), #selector(copyPath(_:)):
+            case #selector(copyName(_:)), #selector(copyPath(_:)),
+                 #selector(BrowserSplitViewController.deleteSelection(_:)):
+                // Delete goes with the path commands, not the blob ones: a folder is a
+                // legitimate thing to delete even though it has no URL to copy.
                 item.isEnabled = hasTarget
             case #selector(copyURL(_:)),
                  #selector(BrowserSplitViewController.toggleQuickLook(_:)),

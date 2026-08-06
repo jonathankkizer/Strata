@@ -85,6 +85,13 @@ enum MainMenu {
             let downloadTo = menu.addItem(withTitle: "Download To…", action: #selector(BrowserSplitViewController.downloadSelectionTo(_:)), keyEquivalent: "d")
             downloadTo.keyEquivalentModifierMask = [.command, .shift]
             menu.addItem(.separator())
+            // Finder's shortcut for Move to Trash, on the command that is as close as
+            // object storage gets. Named "Delete…" rather than "Move to Trash" because
+            // there is no Trash to move it to, and the ellipsis promises the
+            // confirmation sheet that says whether it can be undone.
+            let delete = menu.addItem(withTitle: "Delete…", action: #selector(BrowserSplitViewController.deleteSelection(_:)), keyEquivalent: "\u{8}")
+            delete.keyEquivalentModifierMask = [.command]
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         }
     }

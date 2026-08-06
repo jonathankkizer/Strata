@@ -249,9 +249,13 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         copyURL.target = self
         let addToSidebar = NSMenuItem(title: "Add to Sidebar", action: #selector(BrowserSplitViewController.addToSidebar(_:)), keyEquivalent: "")
         addToSidebar.target = nil   // routed via the responder chain
+        let delete = NSMenuItem(title: "Delete\u{2026}", action: #selector(BrowserSplitViewController.deleteSelection(_:)), keyEquivalent: "")
+        delete.target = nil   // routed via the responder chain
         menu.addItem(quickLook)
         menu.addItem(download)
         menu.addItem(downloadTo)
+        menu.addItem(.separator())
+        menu.addItem(delete)
         menu.addItem(.separator())
         menu.addItem(addToSidebar)
         menu.addItem(.separator())
@@ -859,6 +863,11 @@ final class ColumnBrowserViewController: NSViewController {
     private var activeColumn: BrowseColumn? {
         if let index = focusedColumnIndex { return columns[index] }
         return columns.last(where: { $0.selectedObject != nil })
+    }
+
+    /// Everything selected, folders included. Columns are single-select, so at most one.
+    var selection: [StorageObject] {
+        activeColumn?.selectedObject.map { [$0] } ?? []
     }
 
     /// The real blobs in the current selection. Columns are single-select, so this is

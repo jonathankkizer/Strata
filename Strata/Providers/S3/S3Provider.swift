@@ -98,6 +98,35 @@ final class S3Provider: StorageProvider {
         }
     }
 
+    func delete(key: String, in container: StorageContainer) async throws {
+        try await withRegionalClient(for: container.name) { client in
+            try await client.deleteObject(bucket: container.name, key: key)
+        }
+    }
+
+    func listAllKeys(under prefix: String, in container: StorageContainer) async throws -> [StorageObject] {
+        // No delimiter: S3 stops synthesising CommonPrefixes and returns every key
+        // beneath the prefix, however deep.
+        try await withRegionalClient(for: container.name) { client in
+            try await client.listAllObjects(bucket: container.name, prefix: prefix, delimiter: nil)
+        }
+    }
+
+    func deletionRecovery(in container: StorageContainer) async -> DeletionRecovery {
+        // Versioning is a per-bucket setting, so the cache is keyed by bucket — unlike
+        // Azure, where retention is one account-wide service property.
+        await recovery.value(for: container.name) {
+            let versioned = try await self.withRegionalClient(for: container.name) { client in
+                try await client.bucketVersioningEnabled(bucket: container.name)
+            }
+            // S3 has no soft-delete window; a version either survives the delete or
+            // there was never one to survive.
+            return DeletionRecovery.from(versioningEnabled: versioned, retentionDays: nil)
+        }
+    }
+
+    private let recovery = RecoveryCache()
+
     // MARK: - Writes
 
     func upload(

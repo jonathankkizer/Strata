@@ -59,6 +59,12 @@ final class BrowserContentViewController: NSViewController {
         mode == .list ? list.downloadableSelection : columns.downloadableSelection
     }
 
+    /// Everything selected on the active surface, folders included. Delete acts on this
+    /// rather than on `downloadableSelection`, which is blobs only.
+    var selection: [StorageObject] {
+        mode == .list ? list.selectedObjects() : columns.selection
+    }
+
     /// The container the current selection lives in.
     var selectedContainerName: String? {
         mode == .list ? list.location?.container : columns.selectedContainerName

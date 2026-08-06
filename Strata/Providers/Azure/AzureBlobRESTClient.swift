@@ -256,6 +256,55 @@ struct AzureBlobRESTClient: Sendable {
         _ = try await perform(method: "PUT", url: components.url!, body: .data(Data(xml.utf8)), extraHeaders: headers)
     }
 
+    // MARK: - Delete Blob
+
+    /// Removes a blob. Deleting a key that isn't there is treated as success: that is
+    /// the outcome the caller asked for, and it makes retrying a partly-failed folder
+    /// delete safe.
+    ///
+    /// A blob with snapshots refuses a plain delete with 409 `SnapshotsPresent`. The
+    /// header that overrides this is sent only on that retry rather than always, because
+    /// it isn't accepted on a hierarchical-namespace account's directories.
+    func deleteBlob(container: String, key: String) async throws {
+        let url = blobURL(container: container, blobKey: key)
+        do {
+            _ = try await perform(method: "DELETE", url: url, body: nil, extraHeaders: [:])
+        } catch let error as AzureBlobError {
+            guard case let .httpError(status, code, _) = error else { throw error }
+            switch (status, code) {
+            case (404, _):
+                return
+            case (409, "SnapshotsPresent"):
+                _ = try await perform(
+                    method: "DELETE",
+                    url: url,
+                    body: nil,
+                    extraHeaders: ["x-ms-delete-snapshots": "include"]
+                )
+            default:
+                throw error
+            }
+        }
+    }
+
+    // MARK: - Get Blob Service Properties
+
+    /// The account's retention settings, which decide whether a delete can be undone.
+    ///
+    /// This is an account-level read, so it is cached by the provider rather than asked
+    /// per container — and a caller that can write blobs may still not be allowed to ask
+    /// it, which is why the provider treats a failure as "unknown" rather than an error.
+    func retentionPolicy() async throws -> (versioningEnabled: Bool, retentionDays: Int?) {
+        var components = URLComponents(url: endpoint.baseURL, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "restype", value: "service"),
+            URLQueryItem(name: "comp", value: "properties"),
+        ]
+        let data = try await get(components.url!)
+        let parsed = try BlobServicePropertiesXMLParser().parse(data)
+        return (parsed.versioningEnabled, parsed.retentionDays)
+    }
+
     // MARK: - Transport
 
     private enum RequestBody {
@@ -368,6 +417,55 @@ extension ObjectMetadata {
 // synchronously inside each call — the delegates never cross an actor boundary, so
 // they need not be Sendable. Internal (not private) so they can be unit-tested via
 // `@testable import`.
+
+/// Reads Get Blob Service Properties for the two settings that decide whether a delete
+/// can be undone.
+///
+/// `<DeleteRetentionPolicy>` is scoped deliberately: the same response also carries
+/// `<ContainerDeleteRetentionPolicy>`, with identically-named `Enabled` and `Days`
+/// children, and picking that one up would promise recovery of blobs from a policy that
+/// only ever retained whole containers.
+final class BlobServicePropertiesXMLParser: NSObject, XMLParserDelegate {
+    private var text = ""
+    private var inBlobRetentionPolicy = false
+    private var retentionEnabled = false
+    private var days: Int?
+    private var versioningEnabled = false
+
+    func parse(_ data: Data) throws -> (versioningEnabled: Bool, retentionDays: Int?) {
+        let parser = XMLParser(data: data)
+        parser.delegate = self
+        guard parser.parse() else {
+            throw parser.parserError ?? AzureBlobError.malformedResponse
+        }
+        return (versioningEnabled, retentionEnabled ? days : nil)
+    }
+
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String]) {
+        text = ""
+        if elementName == "DeleteRetentionPolicy" { inBlobRetentionPolicy = true }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        text += string
+    }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch elementName {
+        case "Enabled" where inBlobRetentionPolicy:
+            retentionEnabled = value.lowercased() == "true"
+        case "Days" where inBlobRetentionPolicy:
+            days = Int(value)
+        case "DeleteRetentionPolicy":
+            inBlobRetentionPolicy = false
+        case "IsVersioningEnabled":
+            versioningEnabled = value.lowercased() == "true"
+        default:
+            break
+        }
+    }
+}
 
 final class ContainerListXMLParser: NSObject, XMLParserDelegate {
     private var containers: [StorageContainer] = []

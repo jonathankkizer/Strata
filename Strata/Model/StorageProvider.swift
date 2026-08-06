@@ -59,6 +59,20 @@ protocol StorageProvider: Sendable {
     ///
     /// Reads emit no storage event, so there is no `plan` analog here.
     func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
+
+    /// Removes one object. Both clouds treat deleting a key that isn't there as success,
+    /// so this is idempotent — which is what makes a partially-failed folder delete safe
+    /// to retry.
+    func delete(key: String, in container: StorageContainer) async throws
+
+    /// Every real key under `prefix`, with no folder collapsing. A folder is only a
+    /// prefix, so this is what deleting one actually has to remove.
+    func listAllKeys(under prefix: String, in container: StorageContainer) async throws -> [StorageObject]
+
+    /// Whether a delete here can be undone: Azure soft delete, S3 versioning, or
+    /// neither. Answering `.unknown` is expected when the account won't say — reading
+    /// the policy takes a permission the user may not have.
+    func deletionRecovery(in container: StorageContainer) async -> DeletionRecovery
 }
 
 extension StorageProvider {

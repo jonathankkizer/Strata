@@ -233,6 +233,110 @@ struct S3IntegrationTests {
         try await client.deleteObject(bucket: environment.bucket, key: key)
     }
 
+    // MARK: - Delete
+
+    /// The recursive listing a folder delete is built on. With no delimiter S3 stops
+    /// synthesising CommonPrefixes, so what comes back is every real key however deep —
+    /// which is exactly what has to be removed, and nothing that isn't an object.
+    @Test("Lists every key under a prefix with no folders in the way")
+    func listsKeysRecursively() async throws {
+        let provider = liveProvider()
+        let container = StorageContainer(name: environment.bucket)
+        let root = "strata-integration/recursive-\(UUID().uuidString)/"
+        let keys = [root + "top.txt", root + "a/one.txt", root + "a/b/two.txt"]
+        try await seed(keys, in: container, provider: provider)
+        defer { Task { for key in keys { try? await provider.delete(key: key, in: container) } } }
+
+        let listed = try await provider.listAllKeys(under: root, in: container)
+        #expect(Set(listed.map(\.key)) == Set(keys))
+        // A delimiter-less listing has no folders in it at all — a prefix here would be
+        // a key the delete would then try to remove as though it were an object.
+        #expect(listed.allSatisfy { !$0.isPrefix })
+
+        // The delimited listing of the same prefix sees one file and one folder, which
+        // is the difference the delete depends on.
+        let browsed = try await provider.listObjects(in: container, prefix: root)
+        #expect(browsed.filter(\.isPrefix).map(\.key) == [root + "a/"])
+    }
+
+    /// The whole path a folder delete takes: list it, plan it, run it, and check that
+    /// what the plan claimed it would remove is what is actually gone.
+    @Test("Deletes a folder and everything under it")
+    func deletesAFolderThroughTheRun() async throws {
+        let provider = liveProvider()
+        let container = StorageContainer(name: environment.bucket)
+        let root = "strata-integration/folder-\(UUID().uuidString)/"
+        let keys = [root + "top.txt", root + "a/one.txt", root + "a/b/two.txt"]
+        try await seed(keys, in: container, provider: provider)
+
+        let children = try await provider.listAllKeys(under: root, in: container)
+        let plan = DeletionPlan.make(
+            selection: [StorageObject(key: root, isPrefix: true)],
+            expandedKeys: [root: children]
+        )
+        // Three objects plus the prefix itself, which S3 has no record of — deleting a
+        // key that was never there is a 204 all the same.
+        #expect(plan.keys.count == 4)
+
+        let run = DeletionRun(provider: provider, container: container, plan: plan)
+        let failures = await run.run { _ in }
+        #expect(failures.isEmpty, "unexpected failures: \(failures)")
+
+        let remaining = try await provider.listAllKeys(under: root, in: container)
+        #expect(remaining.isEmpty)
+    }
+
+    @Test("The provider's delete removes exactly the key it was given")
+    func providerDeletesOneObject() async throws {
+        let provider = liveProvider()
+        let container = StorageContainer(name: environment.bucket)
+        let root = "strata-integration/single-\(UUID().uuidString)/"
+        let doomed = root + "doomed.txt"
+        let bystander = root + "keep.txt"
+        try await seed([doomed, bystander], in: container, provider: provider)
+        defer { Task { try? await provider.delete(key: bystander, in: container) } }
+
+        try await provider.delete(key: doomed, in: container)
+
+        let remaining = try await provider.listAllKeys(under: root, in: container).map(\.key)
+        #expect(remaining == [bystander])
+    }
+
+    /// What the confirmation sheet asks before it says "this can't be undone". These
+    /// buckets have never had versioning turned on, so the honest answer is that the
+    /// delete is final — and getting that wrong in the reassuring direction is the
+    /// dangerous way to be wrong.
+    @Test("Reports that an unversioned bucket keeps nothing")
+    func reportsDeletionRecovery() async throws {
+        let container = StorageContainer(name: environment.bucket)
+        #expect(try await client().bucketVersioningEnabled(bucket: environment.bucket) == false)
+        #expect(await liveProvider().deletionRecovery(in: container) == .permanent)
+    }
+
+    /// Writes a handful of tiny objects, so a delete test has something of its own to
+    /// remove rather than touching the seeded fixtures every other test reads.
+    private func seed(
+        _ keys: [String],
+        in container: StorageContainer,
+        provider: S3Provider
+    ) async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("strata-seed-\(UUID().uuidString).txt")
+        try Data("seed\n".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        for key in keys {
+            try await provider.upload(
+                from: source,
+                toKey: key,
+                in: container,
+                contentType: "text/plain",
+                plan: UploadPlan(byteCount: 5, target: .s3),
+                onProgress: nil
+            )
+        }
+    }
+
     // MARK: - Through the provider
 
     /// Everything above drives `S3RESTClient` directly. These go through `S3Provider`,
