@@ -58,6 +58,31 @@ final class AzureBlobProvider: StorageProvider {
         try await client.downloadBlob(container: container.name, key: key, to: destinationURL, onProgress: onProgress)
     }
 
+    func delete(key: String, in container: StorageContainer) async throws {
+        try await client.deleteBlob(container: container.name, key: key)
+    }
+
+    func listAllKeys(under prefix: String, in container: StorageContainer) async throws -> [StorageObject] {
+        // No delimiter: the service stops collapsing folders and returns every blob
+        // beneath the prefix, however deep.
+        try await client.listAllBlobs(inContainer: container.name, prefix: prefix, delimiter: nil)
+    }
+
+    func deletionRecovery(in container: StorageContainer) async -> DeletionRecovery {
+        await retention.value {
+            let policy = try await client.retentionPolicy()
+            return DeletionRecovery.from(
+                versioningEnabled: policy.versioningEnabled,
+                retentionDays: policy.retentionDays
+            )
+        }
+    }
+
+    /// Retention is an account-level setting, so it is read once and reused for every
+    /// container — and a failure is remembered too, rather than re-asking for a
+    /// permission the user has already been refused.
+    private let retention = RecoveryCache()
+
     func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         // The plan's predicted operation is the source of truth so the emitted
         // event matches what the UI showed the user before they confirmed.

@@ -199,6 +199,22 @@ struct S3RESTClient: Sendable {
         _ = try await perform(method: "DELETE", url: url, payload: .empty, bucket: bucket)
     }
 
+    /// Whether the bucket keeps previous versions, which is what decides if a delete
+    /// here can be undone. `Status` is absent on a bucket that has never had versioning
+    /// turned on, and `Suspended` on one where it was turned back off — in both cases a
+    /// delete is final for anything written since.
+    func bucketVersioningEnabled(bucket: String) async throws -> Bool {
+        guard var components = URLComponents(url: endpoint.bucketURL(bucket), resolvingAgainstBaseURL: false) else {
+            throw S3Error.malformedResponse
+        }
+        components.percentEncodedQuery = "versioning="
+        guard let url = components.url else { throw S3Error.malformedResponse }
+
+        let data = try await perform(method: "GET", url: url, payload: .empty, bucket: bucket).data
+        let body = String(data: data, encoding: .utf8) ?? ""
+        return S3ErrorXMLParser.element("Status", in: body) == "Enabled"
+    }
+
     // MARK: - Writes
 
     /// Single-request upload, streamed from disk. Emits `s3:ObjectCreated:Put`.

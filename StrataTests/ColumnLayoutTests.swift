@@ -160,6 +160,11 @@ private struct StubProvider: StorageProvider {
     func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         throw StorageProviderError.notImplemented
     }
+    func delete(key: String, in container: StorageContainer) async throws {
+        throw StorageProviderError.notImplemented
+    }
+    func listAllKeys(under prefix: String, in container: StorageContainer) async throws -> [StorageObject] { [] }
+    func deletionRecovery(in container: StorageContainer) async -> DeletionRecovery { .permanent }
 }
 
 /// The width lives in a preference so a column the user has widened stays widened —
