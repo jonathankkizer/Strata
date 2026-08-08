@@ -1,28 +1,121 @@
 {
-  "fill" : "system-dark",
-  "groups" : [
+  "fill-specializations" : [
     {
-      "layers" : [
-        {
-          "blend-mode" : "normal",
-          "glass" : true,
-          "image-name" : "bucket-icon.svg",
-          "name" : "bucket-icon",
-          "position" : {
-            "scale" : 1.1,
-            "translation-in-points" : [
-              0,
-              0
-            ]
+      "value" : {
+        "linear-gradient" : [
+          "display-p3:0.17255,0.29804,0.38824,1.00000",
+          "srgb:0.07451,0.15294,0.22745,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 0.7
           }
         }
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "display-p3:0.10588,0.19216,0.27059,1.00000",
+          "srgb:0.03922,0.09020,0.14510,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 0.7
+          }
+        }
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "blur-material" : 0,
+      "layers" : [
+        {
+          "image-name" : "4-cap 2.svg",
+          "name" : "4-cap 2"
+        }
       ],
+      "name" : "cap",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 1
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0
+      }
+    },
+    {
+      "blur-material" : 0,
+      "layers" : [
+        {
+          "hidden" : false,
+          "image-name" : "3-tube-glass 2.svg",
+          "name" : "3-tube-glass 2"
+        }
+      ],
+      "lighting" : "combined",
+      "name" : "tube",
+      "opacity" : 0.22,
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5
       },
+      "specular" : true,
       "translucency" : {
         "enabled" : true,
+        "value" : 0.7
+      }
+    },
+    {
+      "blur-material" : 0,
+      "layers" : [
+        {
+          "image-name" : "2-core-strata 3.svg",
+          "name" : "2-core-strata 3"
+        }
+      ],
+      "name" : "core",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0
+      }
+    },
+    {
+      "blur-material" : 0,
+      "hidden" : false,
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "1-glow-halo_1.png",
+          "name" : "1-glow-halo_1"
+        }
+      ],
+      "name" : "glow",
+      "opacity" : 0.35,
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : false,
         "value" : 0.5
       }
     }
