@@ -405,16 +405,21 @@ final class ConnectAccountViewController: NSViewController {
         }
     }
 
+    /// Only offers manual entry when it could work. A missing or signed-out CLI
+    /// breaks connecting by name exactly as it broke the list, so saying "you can
+    /// still enter a name" there would just move the failure one step later.
     private func fallbackMessage(for error: Error, kind: ProviderKind) -> String {
         switch error {
         case AzureManagementError.managementForbidden:
-            return "Your sign-in doesn\u{2019}t have directory/reader access to list accounts. You can still enter a name below."
+            return "Your sign-in can\u{2019}t list storage accounts, which needs Reader access to the subscription. You can still enter a name below."
         case AzureManagementError.unauthorized:
-            return "Authentication failed. Check that \u{2018}az login\u{2019} is current, then try again."
-        case AWSCLIError.binaryNotFound:
-            return "The AWS CLI wasn\u{2019}t found. Install it (\u{2018}brew install awscli\u{2019}) or enter a profile name below."
+            return "Azure didn\u{2019}t accept this sign-in. Run \u{201C}az login\u{201D} in Terminal, then try again."
+        case let error as AzureCLIError:
+            return StorageErrorText.message(for: error, kind: kind).full
+        case let error as AWSCLIError:
+            return StorageErrorText.message(for: error, kind: kind).full
         default:
-            return "Couldn\u{2019}t list accounts. You can still enter a name below."
+            return "Couldn\u{2019}t list accounts. You can still enter a name below.\n\n\(StorageErrorText.summary(for: error, kind: kind))"
         }
     }
 

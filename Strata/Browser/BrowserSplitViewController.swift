@@ -769,26 +769,10 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 } else {
                     self.content.showMessage("No \(account.kind.containerNoun)s in “\(account.name).”")
                 }
-            } catch StorageProviderError.dataPlaneForbidden(let name) {
-                self.content.showMessage("Authenticated, but this identity lacks a “Storage Blob Data” role on “\(name).”\n\nManagement roles (Owner/Contributor/Reader) don’t grant data-plane access.")
-            } catch StorageProviderError.unauthorized {
-                self.content.showMessage(Self.unauthorizedMessage(for: account.kind))
-            } catch StorageProviderError.notImplemented {
-                self.content.showMessage("\(account.kind.displayName) support isn’t finished yet.")
             } catch {
-                self.content.showMessage("Couldn’t connect to “\(account.name).”\n\n\(error.localizedDescription)")
+                let message = StorageErrorText.message(for: error, kind: account.kind)
+                self.content.showMessage("Couldn\u{2019}t connect to \u{201C}\(account.name)\u{201D}.\n\n\(message.full)")
             }
-        }
-    }
-
-    /// Each provider's sign-in lives in its own CLI, so "not authorized" has a
-    /// different remedy depending on which one it is.
-    private static func unauthorizedMessage(for kind: ProviderKind) -> String {
-        switch kind {
-        case .azureBlob:
-            return "Not authorized. Check that `az login` has a session for the account’s tenant."
-        case .s3:
-            return "Not authorized. Check that this profile's credentials are valid — for an SSO profile, `aws sso login` may need running again."
         }
     }
 }

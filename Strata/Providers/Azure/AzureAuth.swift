@@ -28,15 +28,6 @@ enum AzureAuth {
     /// data-plane `storageResource`. Same value across public clouds; sovereign
     /// clouds override it.
     static let managementResource = "https://management.azure.com/"
-
-    /// Candidate paths for the `az` binary. GUI apps launched from Finder do not
-    /// inherit the shell PATH, so the CLI must be resolved explicitly (with a
-    /// Preferences override on top of these).
-    static let azureCLISearchPaths = [
-        "/opt/homebrew/bin/az",
-        "/usr/local/bin/az",
-        "/usr/bin/az",
-    ]
 }
 
 /// A minted data-plane token plus its expiry. Cache and refresh ~5 min before
@@ -54,4 +45,10 @@ struct AzureAccessToken: Sendable {
 /// service-principal sources are interchangeable.
 protocol AzureTokenSource: Sendable {
     func token(asOf now: Date) async throws -> AzureAccessToken
+    /// Forget any cached token, because the service just refused it.
+    func invalidate() async
+}
+
+extension AzureTokenSource {
+    func invalidate() async {}
 }

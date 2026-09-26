@@ -91,4 +91,11 @@ enum StorageProviderError: Error, Sendable, Equatable {
     /// access — this is surfaced with a specific message, not a generic auth error.
     case dataPlaneForbidden(account: String)
     case unauthorized
+    /// Azure's `AuthorizationFailure`: the account's firewall or private-endpoint
+    /// rules turned the request away before any role was checked. Reporting it as a
+    /// missing role sends people to IAM for a network setting.
+    case networkRestricted(account: String)
+    /// The Mac's clock is far enough off that the service rejects the signature
+    /// (S3's `RequestTimeTooSkewed`).
+    case clockSkewed
 }

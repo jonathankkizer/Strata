@@ -143,6 +143,17 @@ struct S3RESTClient: Sendable {
         to destinationURL: URL,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
+        try await retryingOnceIfRejected {
+            try await downloadObjectOnce(bucket: bucket, key: key, to: destinationURL, onProgress: onProgress)
+        }
+    }
+
+    private func downloadObjectOnce(
+        bucket: String,
+        key: String,
+        to destinationURL: URL,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
         guard let url = endpoint.objectURL(bucket: bucket, key: key) else {
             throw S3Error.malformedResponse
         }
@@ -484,6 +495,35 @@ struct S3RESTClient: Sendable {
         extraHeaders: [String: String] = [:],
         delegate: (any URLSessionTaskDelegate)? = nil
     ) async throws -> (data: Data, response: HTTPURLResponse) {
+        try await retryingOnceIfRejected {
+            try await performOnce(
+                method: method, url: url, payload: payload, bucket: bucket,
+                body: body, extraHeaders: extraHeaders, delegate: delegate
+            )
+        }
+    }
+
+    /// Credentials can be refused while the cache still thinks they're good — an SSO
+    /// session ended early, or keys rotated. Dropping them and asking the CLI once
+    /// more costs one request, and saves the user from reconnecting.
+    private func retryingOnceIfRejected<T>(_ attempt: () async throws -> T) async throws -> T {
+        do {
+            return try await attempt()
+        } catch StorageProviderError.unauthorized {
+            await credentialSource.invalidate()
+            return try await attempt()
+        }
+    }
+
+    private func performOnce(
+        method: String,
+        url: URL,
+        payload: SigV4Signer.Payload,
+        bucket: String?,
+        body: RequestBody?,
+        extraHeaders: [String: String],
+        delegate: (any URLSessionTaskDelegate)?
+    ) async throws -> (data: Data, response: HTTPURLResponse) {
         let request = try await signedRequest(method: method, url: url, payload: payload, extraHeaders: extraHeaders)
 
         let data: Data
@@ -547,6 +587,9 @@ struct S3RESTClient: Sendable {
             return StorageProviderError.unauthorized
         case "AccessDenied":
             return StorageProviderError.dataPlaneForbidden(account: bucket ?? "")
+        case "RequestTimeTooSkewed":
+            // A 403, and not a permissions problem: the Mac's clock is off.
+            return StorageProviderError.clockSkewed
         case "NoSuchBucket":
             return S3Error.noSuchBucket(bucket ?? "")
         default:
