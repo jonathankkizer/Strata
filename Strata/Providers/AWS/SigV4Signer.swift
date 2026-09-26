@@ -167,9 +167,7 @@ struct SigV4Signer: Sendable {
     /// through, everything else is `%XX` uppercase. Notably stricter than
     /// `URLComponents`, which leaves several sub-delimiters unescaped.
     static func encodePathSegment(_ segment: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return segment.addingPercentEncoding(withAllowedCharacters: allowed) ?? segment
+        StrictPercentEncoding.component(segment)
     }
 
     /// Builds a query string with SigV4's encoding rules, already sorted into canonical
@@ -192,9 +190,7 @@ struct SigV4Signer: Sendable {
     /// Encodes an object key into a URL path, keeping `/` as a separator so prefixes
     /// stay real path components.
     static func encodeKey(_ key: String) -> String {
-        key.split(separator: "/", omittingEmptySubsequences: false)
-            .map { encodePathSegment(String($0)) }
-            .joined(separator: "/")
+        StrictPercentEncoding.key(key)
     }
 
     // MARK: - Signing key

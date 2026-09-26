@@ -53,7 +53,10 @@ struct AzureDeleteIntegrationTests {
         defer { Task { for key in keys { try? await provider.delete(key: key, in: container) } } }
 
         let listed = try await provider.listAllKeys(under: root, in: container)
-        #expect(Set(listed.map(\.key)) == Set(keys))
+        // A hierarchical-namespace account also lists its real directories (`…/a`,
+        // `…/a/b`) as entries of their own; a flat account has none.
+        let directories = Set(keys.flatMap(Self.parentDirectories(of:))).subtracting([String(root.dropLast())])
+        #expect(Set(listed.map(\.key)).subtracting(directories) == Set(keys))
         // Without a delimiter the service stops synthesising BlobPrefix folders, so what
         // comes back is only real blobs — which is what a delete may act on.
         #expect(listed.allSatisfy { !$0.isPrefix })
@@ -75,8 +78,9 @@ struct AzureDeleteIntegrationTests {
             selection: [StorageObject(key: root, isPrefix: true)],
             expandedKeys: [root: children]
         )
-        // Three blobs plus the prefix itself, which has no blob of its own here.
-        #expect(plan.keys.count == 4)
+        // Three blobs plus the prefix itself — and, on a hierarchical-namespace
+        // account, the directories `a` and `a/b` as well.
+        #expect(plan.keys.count == 4 || plan.keys.count == 6)
         // The prefix must be last: on a hierarchical-namespace account it is a real
         // directory, and a directory refuses to go while anything is still inside it.
         #expect(plan.batches.last == [root])
@@ -136,6 +140,13 @@ struct AzureDeleteIntegrationTests {
 
     /// Writes tiny blobs for a test to delete. Everything lands under the caller's own
     /// scratch prefix.
+    /// Every directory above a key, without trailing slashes: `r/a/b/x` gives `r`,
+    /// `r/a` and `r/a/b`.
+    private static func parentDirectories(of key: String) -> [String] {
+        let parts = key.split(separator: "/", omittingEmptySubsequences: false).dropLast()
+        return parts.indices.map { parts[...$0].joined(separator: "/") }
+    }
+
     private func seed(_ keys: [String], provider: AzureBlobProvider) async throws {
         let source = FileManager.default.temporaryDirectory
             .appendingPathComponent("strata-az-seed-\(UUID().uuidString).txt")

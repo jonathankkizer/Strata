@@ -29,6 +29,24 @@ struct AzureStorageEndpoint: Sendable, Hashable {
     var baseURL: URL {
         URL(string: "https://\(account).\(blobSuffix)")!
     }
+
+    /// The URL for the account, a container, or a blob, with the key addressed
+    /// exactly: `logs/` and `logs` are different blobs on a flat account, and so are
+    /// `a//b` and `a/b`. The query is strictly encoded too, because Azure reads a bare
+    /// `+` as a space.
+    func url(container: String? = nil, key: String? = nil, query: [(name: String, value: String)] = []) -> URL {
+        var path = ""
+        if let container {
+            path += "/" + StrictPercentEncoding.component(container)
+            if let key { path += "/" + StrictPercentEncoding.key(key) }
+        }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "\(account).\(blobSuffix)"
+        components.percentEncodedPath = path
+        if !query.isEmpty { components.percentEncodedQuery = StrictPercentEncoding.query(query) }
+        return components.url!
+    }
 }
 
 enum AzureBlobError: Error, Sendable {
@@ -97,11 +115,10 @@ struct AzureBlobRESTClient: Sendable {
         var marker: String?
         var page = 0
         repeat {
-            var components = URLComponents(url: endpoint.baseURL, resolvingAgainstBaseURL: false)!
-            components.queryItems = [URLQueryItem(name: "comp", value: "list")]
-            if let marker { components.queryItems?.append(URLQueryItem(name: "marker", value: marker)) }
+            var query = [(name: "comp", value: "list")]
+            if let marker { query.append((name: "marker", value: marker)) }
 
-            let data = try await get(components.url!)
+            let data = try await get(endpoint.url(query: query))
             let parsed = try ContainerListXMLParser().parse(data)
             results.append(contentsOf: parsed.containers)
             marker = parsed.nextMarker
@@ -119,19 +136,16 @@ struct AzureBlobRESTClient: Sendable {
         var results: [StorageObject] = []
         var marker: String?
         var page = 0
-        let containerURL = endpoint.baseURL.appendingPathComponent(container)
         repeat {
-            var components = URLComponents(url: containerURL, resolvingAgainstBaseURL: false)!
             var query = [
-                URLQueryItem(name: "restype", value: "container"),
-                URLQueryItem(name: "comp", value: "list"),
+                (name: "restype", value: "container"),
+                (name: "comp", value: "list"),
             ]
-            if !prefix.isEmpty { query.append(URLQueryItem(name: "prefix", value: prefix)) }
-            if let delimiter { query.append(URLQueryItem(name: "delimiter", value: delimiter)) }
-            if let marker { query.append(URLQueryItem(name: "marker", value: marker)) }
-            components.queryItems = query
+            if !prefix.isEmpty { query.append((name: "prefix", value: prefix)) }
+            if let delimiter { query.append((name: "delimiter", value: delimiter)) }
+            if let marker { query.append((name: "marker", value: marker)) }
 
-            let data = try await get(components.url!)
+            let data = try await get(endpoint.url(container: container, query: query))
             let parsed = try BlobListXMLParser().parse(data)
             results.append(contentsOf: parsed.objects)
             marker = parsed.nextMarker
@@ -215,7 +229,6 @@ struct AzureBlobRESTClient: Sendable {
     /// `PutBlockList` on commit (even for a single block). Memory stays bounded
     /// at one block (8 MiB default).
     func putBlockList(container: String, key: String, fileURL: URL, contentType: String?, blockSize: Int = 8 * 1024 * 1024, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
-        let url = blobURL(container: container, blobKey: key)
         let size = max(1, blockSize)
         let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
 
@@ -229,16 +242,15 @@ struct AzureBlobRESTClient: Sendable {
             guard let chunk = try handle.read(upToCount: size), !chunk.isEmpty else { break }
             let blockID = Data(String(format: "block-%08d", index).utf8).base64EncodedString()
 
-            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-            components.percentEncodedQueryItems = [
-                URLQueryItem(name: "comp", value: "block"),
-                // base64 can contain + / = — encode the whole value so the query is valid.
-                URLQueryItem(name: "blockid", value: blockID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? blockID),
-            ]
+            // base64 can contain + / =, which the strict encoding escapes.
+            let blockURL = endpoint.url(container: container, key: key, query: [
+                (name: "comp", value: "block"),
+                (name: "blockid", value: blockID),
+            ])
             // Progress accumulates across blocks: this block's bytes offset by the
             // bytes already committed.
             let delegate = onProgress.map { UploadProgressDelegate(baseOffset: offset, totalBytes: total, onProgress: $0) }
-            _ = try await perform(method: "PUT", url: components.url!, body: .data(chunk), extraHeaders: [:], delegate: delegate)
+            _ = try await perform(method: "PUT", url: blockURL, body: .data(chunk), extraHeaders: [:], delegate: delegate)
             blockIDs.append(blockID)
             offset += Int64(chunk.count)
             index += 1
@@ -249,11 +261,10 @@ struct AzureBlobRESTClient: Sendable {
         for id in blockIDs { xml += "  <Latest>\(id)</Latest>\n" }
         xml += "</BlockList>"
 
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "comp", value: "blocklist")]
+        let blockListURL = endpoint.url(container: container, key: key, query: [(name: "comp", value: "blocklist")])
         var headers = ["Content-Type": "application/xml"]
         if let contentType { headers["x-ms-blob-content-type"] = contentType }
-        _ = try await perform(method: "PUT", url: components.url!, body: .data(Data(xml.utf8)), extraHeaders: headers)
+        _ = try await perform(method: "PUT", url: blockListURL, body: .data(Data(xml.utf8)), extraHeaders: headers)
     }
 
     // MARK: - Delete Blob
@@ -265,6 +276,13 @@ struct AzureBlobRESTClient: Sendable {
     /// A blob with snapshots refuses a plain delete with 409 `SnapshotsPresent`. The
     /// header that overrides this is sent only on that retry rather than always, because
     /// it isn't accepted on a hierarchical-namespace account's directories.
+    ///
+    /// A folder's key ends in `/`. On a flat account that names a zero-byte marker blob
+    /// and is deleted exactly as written — stripping the slash would delete a sibling
+    /// blob that happens to share the folder's name. A hierarchical-namespace account
+    /// has no blob at `logs/`: it answers `400 InvalidUri`, and the directory itself
+    /// lives at `logs`. A flat account never gives that answer for a well-formed name,
+    /// so it is safe to read as "this is a directory" and retry without the slash.
     func deleteBlob(container: String, key: String) async throws {
         let url = blobURL(container: container, blobKey: key)
         do {
@@ -274,6 +292,8 @@ struct AzureBlobRESTClient: Sendable {
             switch (status, code) {
             case (404, _):
                 return
+            case (400, "InvalidUri") where key.hasSuffix("/") && key.count > 1:
+                try await deleteBlob(container: container, key: String(key.dropLast()))
             case (409, "SnapshotsPresent"):
                 _ = try await perform(
                     method: "DELETE",
@@ -295,12 +315,10 @@ struct AzureBlobRESTClient: Sendable {
     /// per container — and a caller that can write blobs may still not be allowed to ask
     /// it, which is why the provider treats a failure as "unknown" rather than an error.
     func retentionPolicy() async throws -> (versioningEnabled: Bool, retentionDays: Int?) {
-        var components = URLComponents(url: endpoint.baseURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "restype", value: "service"),
-            URLQueryItem(name: "comp", value: "properties"),
-        ]
-        let data = try await get(components.url!)
+        let data = try await get(endpoint.url(query: [
+            (name: "restype", value: "service"),
+            (name: "comp", value: "properties"),
+        ]))
         let parsed = try BlobServicePropertiesXMLParser().parse(data)
         return (parsed.versioningEnabled, parsed.retentionDays)
     }
@@ -356,14 +374,8 @@ struct AzureBlobRESTClient: Sendable {
         }
     }
 
-    /// Builds a blob URL, appending each path segment so embedded slashes are
-    /// preserved as real path separators.
     private func blobURL(container: String, blobKey: String) -> URL {
-        var url = endpoint.baseURL.appendingPathComponent(container)
-        for segment in blobKey.split(separator: "/", omittingEmptySubsequences: true) {
-            url.appendPathComponent(String(segment))
-        }
-        return url
+        endpoint.url(container: container, key: blobKey)
     }
 
     /// Pulls Azure's `<Code>…</Code>` out of an error response body for diagnostics.

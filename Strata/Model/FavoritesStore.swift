@@ -16,6 +16,8 @@ final class FavoritesStore {
     static let shared = FavoritesStore()
 
     private static let storageKey = "Favorites"
+    /// Where the stored favorites are copied if any of them can't be read.
+    static let unreadableBackupKey = "FavoritesUnreadableBackup"
 
     private let defaults: UserDefaults
     private(set) var favorites: [Favorite] = []
@@ -94,9 +96,36 @@ final class FavoritesStore {
         defaults.set(data, forKey: Self.storageKey)
     }
 
+    /// Decodes entry by entry, so one favorite this build can't read — written by a
+    /// newer version, say, or damaged — costs that one entry rather than the whole
+    /// list. Decoding the array in one go would turn a single bad entry into an empty
+    /// sidebar, and the next save would then overwrite everything for good.
+    ///
+    /// When anything is skipped, the original bytes are copied aside first (once), so
+    /// the skipped entries are never destroyed by a later save.
     private func load() {
-        guard let data = defaults.data(forKey: Self.storageKey),
-              let decoded = try? JSONDecoder().decode([Favorite].self, from: data) else { return }
-        favorites = decoded
+        guard let data = defaults.data(forKey: Self.storageKey) else { return }
+        guard let entries = try? JSONDecoder().decode([LossyFavorite].self, from: data) else {
+            preserveUnreadable(data)
+            return
+        }
+        let readable = entries.compactMap(\.favorite)
+        if readable.count < entries.count { preserveUnreadable(data) }
+        favorites = readable
+    }
+
+    private func preserveUnreadable(_ data: Data) {
+        guard defaults.data(forKey: Self.unreadableBackupKey) == nil else { return }
+        defaults.set(data, forKey: Self.unreadableBackupKey)
+    }
+}
+
+/// One element of the stored array, which decodes to `nil` instead of failing the
+/// whole array.
+private struct LossyFavorite: Decodable {
+    let favorite: Favorite?
+
+    init(from decoder: any Decoder) throws {
+        favorite = try? Favorite(from: decoder)
     }
 }

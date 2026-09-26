@@ -71,6 +71,21 @@ struct S3ObjectPage: Sendable, Equatable {
 
 final class S3ObjectListXMLParser: NSObject, XMLParserDelegate {
 
+    /// Set when the request asked for `encoding-type=url`. Keys are then decoded here,
+    /// which is what lets a key with leading or trailing spaces, or a control character
+    /// XML can't carry, come through intact.
+    private let isURLEncoded: Bool
+    /// A zero-byte `folder/` key is the console's placeholder for an empty folder.
+    /// Browsing (with a delimiter) hides it, since the folder already shows as a
+    /// common prefix. A full-key listing keeps it, because a folder delete that skipped
+    /// it would leave the folder standing.
+    private let keepsFolderMarkers: Bool
+
+    init(isURLEncoded: Bool = false, keepsFolderMarkers: Bool = false) {
+        self.isURLEncoded = isURLEncoded
+        self.keepsFolderMarkers = keepsFolderMarkers
+    }
+
     private var objects: [StorageObject] = []
     private var continuationToken: String?
     private var isTruncated = false
@@ -96,6 +111,14 @@ final class S3ObjectListXMLParser: NSObject, XMLParserDelegate {
         return formatter
     }()
     private let fallbackDateFormatter = ISO8601DateFormatter()
+
+    /// S3's URL encoding is form-style: a space arrives as `+`, and a literal `+` as
+    /// `%2B` (verified against live S3), so `+` has to become a space before the
+    /// percent-decoding, not after.
+    private func decodedKey(_ raw: String) -> String {
+        guard isURLEncoded else { return raw }
+        return raw.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? raw
+    }
 
     func parse(_ data: Data) throws -> S3ObjectPage {
         let parser = XMLParser(data: data)
@@ -131,10 +154,13 @@ final class S3ObjectListXMLParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
         switch elementName {
+        // Keys are taken verbatim, never trimmed: "report.csv " and "report.csv" are
+        // different objects, and acting on one when the user picked the other is how
+        // the wrong thing gets downloaded or deleted.
         case "Key" where inContents:
-            key = text
+            key = decodedKey(currentText)
         case "Prefix" where inCommonPrefixes:
-            key = text
+            key = decodedKey(currentText)
         case "Size":
             size = Int64(text) ?? 0
         case "LastModified":
@@ -149,7 +175,7 @@ final class S3ObjectListXMLParser: NSObject, XMLParserDelegate {
         case "IsTruncated":
             isTruncated = (text == "true")
         case "Contents":
-            if let key, !key.isEmpty, !key.hasSuffix("/") || size > 0 {
+            if let key, !key.isEmpty, keepsFolderMarkers || !key.hasSuffix("/") || size > 0 {
                 objects.append(StorageObject(
                     key: key,
                     size: size,

@@ -61,6 +61,17 @@ final class TransferQueue {
         enqueue(item)
     }
 
+    /// Local paths that downloads still own but may not have written yet. Collision
+    /// checks must treat these as taken: the file isn't on disk until the transfer
+    /// finishes, so `fileExists` alone would let a second download of another
+    /// `data.csv` pick the same name and overwrite the first. Unfinished includes failed
+    /// and cancelled items, since Retry writes back to the same place.
+    var claimedDownloadPaths: Set<String> {
+        Set(transfers.lazy
+            .filter { $0.direction == .download && $0.state != .completed }
+            .map { $0.localURL.standardizedFileURL.path })
+    }
+
     private func enqueue(_ item: TransferItem) {
         transfers.insert(item, at: 0)   // newest on top
         postChange()

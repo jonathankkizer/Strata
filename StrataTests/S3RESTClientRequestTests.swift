@@ -45,6 +45,7 @@ struct S3RESTClientRequestTests {
         let values = Dictionary(uniqueKeysWithValues: query.map { ($0.name, $0.value ?? "") })
 
         #expect(values["list-type"] == "2")
+        #expect(values["encoding-type"] == "url")
         #expect(values["prefix"] == "logs/")
         #expect(values["delimiter"] == "/")
         #expect(values["max-keys"] == "1000")
