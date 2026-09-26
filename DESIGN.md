@@ -2,6 +2,8 @@
 
 *Combined design document: the product/architecture writeup plus the Azure integration brief (authentication and Event Grid event-awareness) folded in.*
 
+*This is the intended design, not a description of what's built. Not yet built as of September 2026: window and tab restoration, Services ("Upload to…"), an AppleScript dictionary, App Intents, completion notifications, and a visible upload-threshold setting. The CLI location override exists (Settings ▸ Accounts). [`README.md`](README.md) says what works today; [`ROADMAP.md`](ROADMAP.md) and [`TODO.md`](TODO.md) track the rest.*
+
 ## The pitch
 
 A native macOS client for working with cloud blob storage — AWS S3, Azure Blob Storage, and eventually GCS — that treats Mac platform craft as a first-class feature rather than an afterthought. "Transmit for blob storage" is the elevator pitch. The target user is the developer, data engineer, or analytics engineer who works across cloud providers daily and is poorly served by a combination of the AWS Console, Azure Portal, Cyberduck, and Transmit (which doesn't support Azure at all and treats S3 as a bolted-on FTP protocol).

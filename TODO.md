@@ -251,7 +251,14 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
 - [ ] **F3. Toolbar and tabs.** *Tab bar + fixed in PR #38.* No Back/Forward item group (Finder has it by
   default); no Download/Delete items; tooltips repeat labels. Tab bar has no + (no
   `newWindowForTab(_:)`).
-- [ ] **F4. Finder parity in the browser.**
+- [ ] **F4. Finder parity in the browser.** *PR #39 did: title-case sidebar
+  headers, the favorite tooltip, the Kind column (Finder words, sorted the same way,
+  MIME in the tooltip), relative dates, expansion tooltips on names, and ⌘↑
+  selecting the folder you came from.* Still open: hard-coded sidebar fonts;
+  re-clicking the selected container (needs care: a click that *changes* the
+  selection also sends the action, so it would navigate twice); favorite selection
+  lost on rename; the column header menu; context-menu validation; inspector
+  metadata-key constraints.
   - Sidebar headers uppercased and fonts hard-coded at 13pt
     (`ContainerSidebarViewController` ~lines 222, 386, 396) — use the title as is,
     let `rowSizeStyle` choose the font.
@@ -290,10 +297,11 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
 - [x] **F10. Swift 6 isolation warnings.** (PR #38) `panel.dataSource`/`delegate` assigned
   from nonisolated `beginPreviewPanelControl`/`end…`
   (`BrowserSplitViewController` ~lines 807-813).
-- [ ] **F11. Preview cache never evicts.** Add an LRU size cap, prune on launch.
-- [ ] **F12. Folder upload through a symlink** uses the target's path for the key
+- [x] **F11. Preview cache never evicts.** (PR #39 — 512 MB, least recently used first,
+  pruned at launch.) Add an LRU size cap, prune on launch.
+- [x] **F12. Folder upload through a symlink** (PR #39) uses the target's path for the key
   (`UploadPlanning` ~lines 38-42); derive from the unresolved enumerator URL.
-- [ ] **F13. Docs drift.** README says S3 is stubbed. DESIGN.md promises Services
+- [x] **F13. Docs drift.** (PR #39) README says S3 is stubbed. DESIGN.md promises Services
   "Upload to…", AppleScript, App Intents, completion notifications, a CLI-path
   setting and a visible upload threshold — none exist. Update README; mark DESIGN
   items as roadmap.

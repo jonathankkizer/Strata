@@ -1,8 +1,8 @@
 import Foundation
 
 /// A sort field for the browser. Raw values match the list view's column
-/// identifiers so NSTableView sort descriptors map directly. "Kind" is the object's
-/// content type; "Tier" is the Azure access tier.
+/// identifiers so NSTableView sort descriptors map directly. "Kind" is the Finder-style
+/// description of the object's type; "Tier" is the storage tier or class.
 enum SortKey: String, CaseIterable, Sendable {
     case name
     case kind
@@ -49,7 +49,7 @@ struct BrowseSort: Equatable, Sendable {
         case .name:
             return lhs.key.localizedStandardCompare(rhs.key)
         case .kind:
-            return (lhs.contentType ?? "").localizedStandardCompare(rhs.contentType ?? "")
+            return lhs.kindDescription.localizedStandardCompare(rhs.kindDescription)
         case .dateModified:
             return Self.compare(lhs.lastModified ?? .distantPast, rhs.lastModified ?? .distantPast)
         case .size:
