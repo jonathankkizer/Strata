@@ -215,7 +215,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   (`QuickLookController` ~lines 75-90). Return silently on cancellation/stale;
   show progress (open the panel with a placeholder, or a spinner in the row).
 
-- [ ] **U8. Find / filter (⌘F).** `NSSearchToolbarItem` bound to ⌘F (Edit ▸
+- [x] **U8. Find / filter (⌘F).** (PR #42) `NSSearchToolbarItem` bound to ⌘F (Edit ▸
   Find) filtering the current listing, both views.
 
 - [x] **U9. Transfers are only reachable from a toolbar popover.** (PR #40) Add Window ▸

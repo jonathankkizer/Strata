@@ -106,6 +106,14 @@ enum MainMenu {
             menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
             menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
             menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+            menu.addItem(.separator())
+            // The standard Find submenu, with its standard item. It narrows the folder
+            // on screen to names containing the text.
+            let find = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+            let findMenu = NSMenu(title: "Find")
+            findMenu.addItem(withTitle: "Find\u{2026}", action: #selector(BrowserWindowController.focusSearch(_:)), keyEquivalent: "f")
+            find.submenu = findMenu
+            menu.addItem(find)
         }
     }
 
