@@ -99,13 +99,19 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   "1 object" for a folder of thousands. Nothing extra is deleted, but the count
   is wrong. Show "Couldn't list the contents of X" in the sheet instead.
 
-- [ ] **R1. No retries or backoff anywhere.** Nothing handles 429/503,
+- [x] **R1. No retries or backoff anywhere.** (PR #36 — per-request retries; resuming is split out as R1b below.) Nothing handles 429/503,
   `SlowDown`, `ServerBusy`, `Retry-After`, a network drop or sleep/wake. One
   failed part aborts a 50 GB upload, and Retry starts from byte 0. *Fix:* a shared
   retry policy (jittered exponential backoff, honour `Retry-After`, max ~5
   attempts) for idempotent requests and individual parts/blocks; keep completed
   block IDs / part ETags on the `TransferItem` so Retry resumes. Downloads: resume
   data from `DownloadSession` (already structured for it).
+
+- [ ] **R1b. Retry after a failed transfer starts again from zero.** Per-request
+  retries (R1) ride out blips, but once a transfer does fail, pressing Retry
+  re-sends every part. Keep completed block IDs / part ETags (and the S3 upload
+  ID) on the `TransferItem` so Retry resumes; for downloads, use
+  `cancel(byProducingResumeData:)` in `DownloadSession`.
 
 - [x] **R2. CLI errors are unreadable.** `AzureCLIError` / `AWSCLIError` aren't
   `LocalizedError`, and `BrowserSplitViewController.connect`'s generic catch
