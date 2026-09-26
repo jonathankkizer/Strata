@@ -12,9 +12,10 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     /// inspector can summarise a multi-selection rather than picking one row.
     var onSelectionChange: (([StorageObject]) -> Void)?
 
-    /// Fired when files or folders are dropped from Finder onto the table; folders are
-    /// expanded recursively by the caller.
-    var onDropFiles: (([URL]) -> Void)?
+    /// Fired when files or folders are dropped from Finder: onto a folder row (that
+    /// folder), or anywhere else (the folder on screen). Folders among the dropped
+    /// files are expanded recursively by the caller.
+    var onDropFiles: (([URL], BrowserLocation) -> Void)?
 
     /// Fired when the browse location changes, so the shared path bar can update.
     var onLocationChange: ((BrowserLocation?) -> Void)?
@@ -107,7 +108,10 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
             guard let self else { return false }
             return self.location != nil && self.scrollView.isHidden
         }
-        root.onDrop = { [weak self] urls in self?.onDropFiles?(urls) }
+        root.onDrop = { [weak self] urls in
+            guard let self, let location = self.location else { return }
+            self.onDropFiles?(urls, location)
+        }
         root.registerForDraggedTypes([.fileURL])
         view = root
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -711,7 +715,10 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         guard location != nil,
               info.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
                   options: [.urlReadingFileURLsOnly: true]) else { return [] }
-        tableView.setDropRow(-1, dropOperation: .on)
+        // Onto a folder row: that folder, as in the Finder. Anywhere else: here.
+        if !(dropOperation == .on && row >= 0 && row < items.count && items[row].isPrefix) {
+            tableView.setDropRow(-1, dropOperation: .on)
+        }
         return .copy
     }
 
@@ -722,9 +729,12 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         guard let rawURLs = info.draggingPasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL], !rawURLs.isEmpty else { return false }
+        ) as? [URL], !rawURLs.isEmpty, let location else { return false }
 
-        onDropFiles?(rawURLs)
+        let destination = row >= 0 && row < items.count && items[row].isPrefix && dropOperation == .on
+            ? BrowserLocation(container: location.container, prefix: items[row].key)
+            : location
+        onDropFiles?(rawURLs, destination)
         return true
     }
 

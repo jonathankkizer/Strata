@@ -43,9 +43,12 @@ final class BrowserContentViewController: NSViewController {
         }
     }
 
-    /// Drop-to-upload is wired for the list today; columns drop is a later refinement.
-    var onDropFiles: (([URL]) -> Void)? {
-        didSet { list.onDropFiles = onDropFiles }
+    /// Files dropped onto either view, with the folder they were dropped into.
+    var onDropFiles: (([URL], BrowserLocation) -> Void)? {
+        didSet {
+            list.onDropFiles = onDropFiles
+            columns.onDropFiles = onDropFiles
+        }
     }
 
     /// Fired when the browse location changes on the active surface, so the window
