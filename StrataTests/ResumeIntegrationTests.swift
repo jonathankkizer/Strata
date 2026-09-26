@@ -143,7 +143,7 @@ struct ResumeIntegrationTests {
 /// Passes requests through to the real network, except the one a test has marked to
 /// break, which fails once with a dropped connection. Keyed by a tag carried in the
 /// session configuration, so tests don't see each other's traffic.
-final class FlakyProxy: URLProtocol, @unchecked Sendable {
+final class FlakyProxy: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var predicates: [String: @Sendable (URLRequest) -> Bool] = [:]
     nonisolated(unsafe) private static var broken = Set<String>()
@@ -204,12 +204,15 @@ final class FlakyProxy: URLProtocol, @unchecked Sendable {
             return
         }
 
-        let handle: @Sendable (Data?, URLResponse?, (any Error)?) -> Void = { [weak self] data, response, error in
-            guard let self else { return }
-            if let error { self.client?.urlProtocol(self, didFailWithError: error); return }
-            if let response { self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
-            if let data { self.client?.urlProtocol(self, didLoad: data) }
-            self.client?.urlProtocolDidFinishLoading(self)
+        // URLProtocol isn't Sendable; URLSession calls back on its own queue, which is
+        // how every URLProtocol is used, so the box only says so to the compiler.
+        let proxy = UncheckedBox(value: self)
+        let handle: @Sendable (Data?, URLResponse?, (any Error)?) -> Void = { data, response, error in
+            let this = proxy.value
+            if let error { this.client?.urlProtocol(this, didFailWithError: error); return }
+            if let response { this.client?.urlProtocol(this, didReceive: response, cacheStoragePolicy: .notAllowed) }
+            if let data { this.client?.urlProtocol(this, didLoad: data) }
+            this.client?.urlProtocolDidFinishLoading(this)
         }
         let task = body.isEmpty && request.httpMethod != "PUT" && request.httpMethod != "POST"
             ? URLSession.shared.dataTask(with: outgoing, completionHandler: handle)
@@ -236,4 +239,8 @@ final class FlakyProxy: URLProtocol, @unchecked Sendable {
         }
         return data
     }
+}
+
+private struct UncheckedBox<Value>: @unchecked Sendable {
+    let value: Value
 }
