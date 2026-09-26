@@ -146,12 +146,21 @@ struct S3RESTClient: Sendable {
         bucket: String,
         key: String,
         to destinationURL: URL,
+        resume: DownloadResumeState? = nil,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
-        try await retryingOnceIfRejected {
-            try await retryPolicy.run {
-                try await downloadObjectOnce(bucket: bucket, key: key, to: destinationURL, onProgress: onProgress)
+        let attempt = {
+            try await retryingOnceIfRejected {
+                try await retryPolicy.run {
+                    try await downloadObjectOnce(bucket: bucket, key: key, to: destinationURL, resume: resume, onProgress: onProgress)
+                }
             }
+        }
+        do {
+            try await attempt()
+        } catch is DownloadResumeRejected {
+            // The resume data was spent on the refused attempt; this one starts fresh.
+            try await attempt()
         }
     }
 
@@ -159,18 +168,23 @@ struct S3RESTClient: Sendable {
         bucket: String,
         key: String,
         to destinationURL: URL,
+        resume: DownloadResumeState?,
         onProgress: (@Sendable (Int64, Int64) -> Void)?
     ) async throws {
         guard let url = endpoint.objectURL(bucket: bucket, key: key) else {
             throw S3Error.malformedResponse
         }
         let request = try await signedRequest(method: "GET", url: url, payload: .empty)
-        let (temporaryURL, http) = try await downloader.download(request, onProgress: onProgress)
+        let resumed = resume?.resumeData != nil
+        let (temporaryURL, http) = try await downloader.download(request, resume: resume, onProgress: onProgress)
 
         var consumed = false
         defer { if !consumed { try? FileManager.default.removeItem(at: temporaryURL) } }
 
         guard (200..<300).contains(http.statusCode) else {
+            // A resumed request replays the original's signature, which S3 only
+            // honours for about fifteen minutes.
+            if resumed { throw DownloadResumeRejected() }
             // A failed GET still writes S3's error XML to the temp file.
             let body = (try? String(contentsOf: temporaryURL, encoding: .utf8)) ?? ""
             throw Self.failure(
@@ -252,7 +266,7 @@ struct S3RESTClient: Sendable {
         var headers: [String: String] = [:]
         if let contentType { headers["Content-Type"] = contentType }
 
-        let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let total = FileFingerprint(fileURL).map { Int64($0.size) } ?? 0
         let delegate = onProgress.map {
             S3UploadProgressDelegate(baseOffset: 0, totalBytes: total, onProgress: $0)
         }
@@ -295,27 +309,72 @@ struct S3RESTClient: Sendable {
         return max(requested, minimumPartSize, Int(neededRounded))
     }
 
+    ///
+    /// With `resume`, a failed upload is left open rather than aborted, and a later
+    /// call carries on with the same upload ID, skipping the parts S3 already has.
+    /// Stopping (cancellation) still aborts, since that's the user giving up on it;
+    /// so does a failure with no `resume` to come back to. If S3 no longer knows the
+    /// upload (aborted elsewhere, or expired by a lifecycle rule), it starts over, once.
     func putObjectMultipart(
         bucket: String,
         key: String,
         fileURL: URL,
         contentType: String?,
         partSize: Int = 8 * 1024 * 1024,
+        resume: UploadResumeState? = nil,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
-        let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let total = FileFingerprint(fileURL).map { Int64($0.size) } ?? 0
         let partSize = Self.effectivePartSize(requested: partSize, fileSize: total)
-        let uploadID = try await createMultipartUpload(bucket: bucket, key: key, contentType: contentType)
+        let state = resume ?? UploadResumeState()
+        if !state.prepare(for: fileURL, chunkSize: partSize), let stale = state.uploadID {
+            // The file changed since the last attempt: its upload can't be reused.
+            await abortDetached(bucket: bucket, key: key, uploadID: stale)
+        }
+        let resuming = state.uploadID != nil
+
+        do {
+            try await sendParts(bucket: bucket, key: key, fileURL: fileURL, contentType: contentType, partSize: partSize, total: total, state: state, keepOnFailure: resume != nil, onProgress: onProgress)
+        } catch S3Error.httpError(404, .some("NoSuchUpload"), _) where resuming {
+            state.reset()
+            state.prepare(for: fileURL, chunkSize: partSize)
+            try await sendParts(bucket: bucket, key: key, fileURL: fileURL, contentType: contentType, partSize: partSize, total: total, state: state, keepOnFailure: resume != nil, onProgress: onProgress)
+        }
+    }
+
+    private func sendParts(
+        bucket: String,
+        key: String,
+        fileURL: URL,
+        contentType: String?,
+        partSize: Int,
+        total: Int64,
+        state: UploadResumeState,
+        keepOnFailure: Bool,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
+        let uploadID: String
+        if let existing = state.uploadID {
+            uploadID = existing
+        } else {
+            uploadID = try await createMultipartUpload(bucket: bucket, key: key, contentType: contentType)
+            state.uploadID = uploadID
+        }
 
         do {
             let handle = try FileHandle(forReadingFrom: fileURL)
             defer { try? handle.close() }
 
+            let partCount = Int((total + Int64(partSize) - 1) / Int64(partSize))
             var parts: [(number: Int, etag: String)] = []
-            var partNumber = 1
-            var offset: Int64 = 0
-
-            while true {
+            for partNumber in 1...max(partCount, 1) where partCount > 0 {
+                let offset = Int64(partNumber - 1) * Int64(partSize)
+                if let etag = state.etag(forPart: partNumber) {
+                    parts.append((partNumber, etag))
+                    onProgress?(min(offset + Int64(partSize), total), total)
+                    continue
+                }
+                try handle.seek(toOffset: UInt64(offset))
                 let chunk = try handle.read(upToCount: partSize) ?? Data()
                 if chunk.isEmpty { break }
                 let etag = try await uploadPart(
@@ -328,29 +387,40 @@ struct S3RESTClient: Sendable {
                     totalBytes: total,
                     onProgress: onProgress
                 )
+                state.recordPart(partNumber, etag: etag)
                 parts.append((partNumber, etag))
-                offset += Int64(chunk.count)
-                partNumber += 1
             }
 
             // S3 rejects a completion with zero parts, so an empty file goes up as a
             // plain PutObject instead.
             guard !parts.isEmpty else {
                 try await abortMultipartUpload(bucket: bucket, key: key, uploadID: uploadID)
+                state.reset()
                 try await putObject(bucket: bucket, key: key, fileURL: fileURL, contentType: contentType, onProgress: onProgress)
                 return
             }
             try await completeMultipartUpload(bucket: bucket, key: key, uploadID: uploadID, parts: parts)
+            state.reset()
         } catch {
-            // The usual way here is the user pressing Stop, which cancels this task —
-            // and URLSession refuses to start a request from a cancelled task, so an
-            // abort made inline would never leave the machine and the parts would keep
-            // billing. An unstructured task doesn't inherit the cancellation.
-            await Task {
-                try? await abortMultipartUpload(bucket: bucket, key: key, uploadID: uploadID)
-            }.value
+            let stopped = error is CancellationError || (error as? URLError)?.code == .cancelled
+            // Kept open only if someone will come back for it: a caller that passed no
+            // resume state never makes a second attempt.
+            if stopped || !keepOnFailure {
+                await abortDetached(bucket: bucket, key: key, uploadID: uploadID)
+                state.reset()
+            }
             throw error
         }
+    }
+
+    /// The usual way here is the user pressing Stop, which cancels the task — and
+    /// URLSession refuses to start a request from a cancelled task, so an abort made
+    /// inline would never leave the machine and the parts would keep billing. An
+    /// unstructured task doesn't inherit the cancellation.
+    func abortDetached(bucket: String, key: String, uploadID: String) async {
+        await Task {
+            try? await abortMultipartUpload(bucket: bucket, key: key, uploadID: uploadID)
+        }.value
     }
 
     func createMultipartUpload(bucket: String, key: String, contentType: String?) async throws -> String {

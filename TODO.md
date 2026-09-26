@@ -108,7 +108,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   block IDs / part ETags on the `TransferItem` so Retry resumes. Downloads: resume
   data from `DownloadSession` (already structured for it).
 
-- [ ] **R1b. Retry after a failed transfer starts again from zero.** Per-request
+- [x] **R1b. Retry after a failed transfer starts again from zero.** (PR #41) Per-request
   retries (R1) ride out blips, but once a transfer does fail, pressing Retry
   re-sends every part. Keep completed block IDs / part ETags (and the S3 upload
   ID) on the `TransferItem` so Retry resumes; for downloads, use

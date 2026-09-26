@@ -181,12 +181,21 @@ struct AzureBlobRESTClient: Sendable {
         container: String,
         key: String,
         to destinationURL: URL,
+        resume: DownloadResumeState? = nil,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
-        try await retryingOnceIfRejected {
-            try await retryPolicy.run {
-                try await downloadBlobOnce(container: container, key: key, to: destinationURL, onProgress: onProgress)
+        let attempt = {
+            try await retryingOnceIfRejected {
+                try await retryPolicy.run {
+                    try await downloadBlobOnce(container: container, key: key, to: destinationURL, resume: resume, onProgress: onProgress)
+                }
             }
+        }
+        do {
+            try await attempt()
+        } catch is DownloadResumeRejected {
+            // The resume data was spent on the refused attempt; this one starts fresh.
+            try await attempt()
         }
     }
 
@@ -194,6 +203,7 @@ struct AzureBlobRESTClient: Sendable {
         container: String,
         key: String,
         to destinationURL: URL,
+        resume: DownloadResumeState?,
         onProgress: (@Sendable (Int64, Int64) -> Void)?
     ) async throws {
         let url = blobURL(container: container, blobKey: key)
@@ -203,7 +213,8 @@ struct AzureBlobRESTClient: Sendable {
         request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(apiVersion, forHTTPHeaderField: "x-ms-version")
 
-        let (temporaryURL, http) = try await downloader.download(request, onProgress: onProgress)
+        let resumed = resume?.resumeData != nil
+        let (temporaryURL, http) = try await downloader.download(request, resume: resume, onProgress: onProgress)
 
         // The downloader hands us a file we own; make sure it never leaks, including
         // on the error paths below.
@@ -211,6 +222,8 @@ struct AzureBlobRESTClient: Sendable {
         defer { if !consumed { try? FileManager.default.removeItem(at: temporaryURL) } }
 
         guard (200..<300).contains(http.statusCode) else {
+            // A resumed request replays the original's headers, token and all.
+            if resumed { throw DownloadResumeRejected() }
             // A failed GET still writes a body — Azure's error XML — to the temp file.
             let body = (try? String(contentsOf: temporaryURL, encoding: .utf8)) ?? ""
             throw Self.failure(status: http.statusCode, body: body, response: http, account: endpoint.account)
@@ -235,7 +248,7 @@ struct AzureBlobRESTClient: Sendable {
         let url = blobURL(container: container, blobKey: key)
         var headers = ["x-ms-blob-type": "BlockBlob"]
         if let contentType { headers["Content-Type"] = contentType }
-        let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+        let total = FileFingerprint(fileURL).map { Int64($0.size) } ?? 0
         let delegate = onProgress.map { UploadProgressDelegate(baseOffset: 0, totalBytes: total, onProgress: $0) }
         _ = try await perform(method: "PUT", url: url, body: .file(fileURL), extraHeaders: headers, delegate: delegate)
     }
@@ -243,19 +256,59 @@ struct AzureBlobRESTClient: Sendable {
     /// Staged upload from a file: Put Block × N, then Put Block List. Emits
     /// `PutBlockList` on commit (even for a single block). Memory stays bounded
     /// at one block (8 MiB default).
-    func putBlockList(container: String, key: String, fileURL: URL, contentType: String?, blockSize: Int = 8 * 1024 * 1024, onProgress: (@Sendable (Int64, Int64) -> Void)? = nil) async throws {
+    ///
+    /// With `resume`, blocks sent by an earlier, failed attempt are skipped: Azure
+    /// keeps uncommitted blocks for a week, and each one's ID is recorded as it lands.
+    /// If the commit then says the blocks aren't there any more (someone else wrote
+    /// the blob, which discards them), it starts again from the first byte, once.
+    func putBlockList(
+        container: String,
+        key: String,
+        fileURL: URL,
+        contentType: String?,
+        blockSize: Int = 8 * 1024 * 1024,
+        resume: UploadResumeState? = nil,
+        onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws {
+        let state = resume ?? UploadResumeState()
         let size = max(1, blockSize)
-        let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+        let resuming = state.prepare(for: fileURL, chunkSize: size)
+        do {
+            try await putBlocksAndCommit(container: container, key: key, fileURL: fileURL, contentType: contentType, blockSize: size, state: state, onProgress: onProgress)
+        } catch AzureBlobError.httpError(400, .some("InvalidBlockList"), _) where resuming {
+            state.reset()
+            state.prepare(for: fileURL, chunkSize: size)
+            try await putBlocksAndCommit(container: container, key: key, fileURL: fileURL, contentType: contentType, blockSize: size, state: state, onProgress: onProgress)
+        }
+        state.reset()
+    }
+
+    private func putBlocksAndCommit(
+        container: String,
+        key: String,
+        fileURL: URL,
+        contentType: String?,
+        blockSize size: Int,
+        state: UploadResumeState,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
+        let total = FileFingerprint(fileURL).map { Int64($0.size) } ?? 0
+        let blockCount = Int((total + Int64(size) - 1) / Int64(size))
 
         let handle = try FileHandle(forReadingFrom: fileURL)
         defer { try? handle.close() }
 
         var blockIDs: [String] = []
-        var offset: Int64 = 0
-        var index = 0
-        while true {
+        for index in 0..<blockCount {
+            let offset = Int64(index) * Int64(size)
+            let blockID = state.blockID(index)
+            blockIDs.append(blockID)
+            if state.hasBlock(index) {
+                onProgress?(min(offset + Int64(size), total), total)
+                continue
+            }
+            try handle.seek(toOffset: UInt64(offset))
             guard let chunk = try handle.read(upToCount: size), !chunk.isEmpty else { break }
-            let blockID = Data(String(format: "block-%08d", index).utf8).base64EncodedString()
 
             // base64 can contain + / =, which the strict encoding escapes.
             let blockURL = endpoint.url(container: container, key: key, query: [
@@ -266,9 +319,7 @@ struct AzureBlobRESTClient: Sendable {
             // bytes already committed.
             let delegate = onProgress.map { UploadProgressDelegate(baseOffset: offset, totalBytes: total, onProgress: $0) }
             _ = try await perform(method: "PUT", url: blockURL, body: .data(chunk), extraHeaders: [:], delegate: delegate)
-            blockIDs.append(blockID)
-            offset += Int64(chunk.count)
-            index += 1
+            state.recordBlock(index)
         }
         // An empty file still needs one commit with zero blocks.
 

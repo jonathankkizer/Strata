@@ -54,16 +54,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let queue = TransferQueue.shared
-        guard queue.hasActive else { return .terminateNow }
-
-        let count = queue.activeCount
-        let alert = NSAlert()
-        alert.messageText = "Quit Strata?"
-        let noun = count == 1 ? "transfer" : "transfers"
-        alert.informativeText = "\(count) \(noun) in progress will be cancelled."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        if queue.hasActive {
+            let count = queue.activeCount
+            let alert = NSAlert()
+            alert.messageText = "Quit Strata?"
+            let noun = count == 1 ? "transfer" : "transfers"
+            alert.informativeText = "\(count) \(noun) in progress will be cancelled."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        }
+        guard queue.hasUnfinishedUploads else { return .terminateNow }
+        // Unfinished uploads may be holding S3 multipart uploads open; give aborting
+        // them a few seconds rather than leaving their parts to be billed.
+        Task { @MainActor in
+            await queue.shutDown(timeout: .seconds(5))
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     // MARK: - Actions wired from the main menu

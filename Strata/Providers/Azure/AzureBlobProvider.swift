@@ -60,6 +60,10 @@ final class AzureBlobProvider: StorageProvider {
         try await client.downloadBlob(container: container.name, key: key, to: destinationURL, onProgress: onProgress)
     }
 
+    func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, resume: DownloadResumeState, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+        try await client.downloadBlob(container: container.name, key: key, to: destinationURL, resume: resume, onProgress: onProgress)
+    }
+
     func delete(key: String, in container: StorageContainer) async throws {
         try await client.deleteBlob(container: container.name, key: key)
     }
@@ -86,11 +90,21 @@ final class AzureBlobProvider: StorageProvider {
     private let retention = RecoveryCache()
 
     func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+        try await upload(from: fileURL, toKey: key, in: container, contentType: contentType, plan: plan, resumeState: nil, onProgress: onProgress)
+    }
+
+    /// Uncommitted blocks expire on their own after a week, so abandoning an upload
+    /// here needs no request (the default `abandonUpload` does nothing).
+    func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, resume: UploadResumeState, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+        try await upload(from: fileURL, toKey: key, in: container, contentType: contentType, plan: plan, resumeState: resume, onProgress: onProgress)
+    }
+
+    private func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, resumeState: UploadResumeState?, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
         // The plan's predicted operation is the source of truth so the emitted
         // event matches what the UI showed the user before they confirmed.
         switch plan.azureCommitAPI {
         case .putBlockList:
-            try await client.putBlockList(container: container.name, key: key, fileURL: fileURL, contentType: contentType, onProgress: onProgress)
+            try await client.putBlockList(container: container.name, key: key, fileURL: fileURL, contentType: contentType, resume: resumeState, onProgress: onProgress)
         default:
             try await client.putBlob(container: container.name, key: key, fileURL: fileURL, contentType: contentType, onProgress: onProgress)
         }

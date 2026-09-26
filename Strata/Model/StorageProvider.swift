@@ -69,6 +69,19 @@ protocol StorageProvider: Sendable {
     /// Reads emit no storage event, so there is no `plan` analog here.
     func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
 
+    /// The same upload, able to carry on from an earlier failed attempt recorded in
+    /// `resume`. Requirements (not only extension methods) so a provider's own
+    /// resuming runs when called through `any StorageProvider`; the defaults below
+    /// just start over.
+    func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, resume: UploadResumeState, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
+
+    /// The same download, able to carry on from where an earlier attempt stopped.
+    func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, resume: DownloadResumeState, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws
+
+    /// Gives up on a failed upload for good — cleared from the list, or the app
+    /// quitting — releasing anything held open on the service for a retry.
+    func abandonUpload(_ resume: UploadResumeState, key: String, in container: StorageContainer) async
+
     /// Removes one object. Both clouds treat deleting a key that isn't there as success,
     /// so this is idempotent — which is what makes a partially-failed folder delete safe
     /// to retry.
@@ -91,6 +104,16 @@ extension StorageProvider {
     var account: ProviderAccount {
         ProviderAccount(kind: kind, name: displayName)
     }
+
+    func upload(from fileURL: URL, toKey key: String, in container: StorageContainer, contentType: String?, plan: UploadPlan, resume: UploadResumeState, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+        try await upload(from: fileURL, toKey: key, in: container, contentType: contentType, plan: plan, onProgress: onProgress)
+    }
+
+    func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, resume: DownloadResumeState, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {
+        try await download(fromKey: key, in: container, to: destinationURL, onProgress: onProgress)
+    }
+
+    func abandonUpload(_ resume: UploadResumeState, key: String, in container: StorageContainer) async {}
 
     /// Lists as `listObjects` does, handing each page to `onPage` as it arrives so a
     /// large folder can start showing before the last page is in. Providers that page
