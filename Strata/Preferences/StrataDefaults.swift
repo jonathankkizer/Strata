@@ -22,6 +22,24 @@ enum StrataDefaults {
         set { UserDefaults.standard.set(!newValue, forKey: dontNotifyWhenTransfersFinishKey) }
     }
 
+    private static let sessionKey = "BrowserSession"
+
+    /// The windows and tabs to reopen on the next launch. Nil when there's nothing
+    /// saved or it can't be read.
+    static var session: BrowserSession? {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: sessionKey) else { return nil }
+            return try? JSONDecoder().decode(BrowserSession.self, from: data)
+        }
+        set {
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: sessionKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: sessionKey)
+            }
+        }
+    }
+
     private static let azureCLIPathKey = "AzureCLIPath"
     private static let awsCLIPathKey = "AWSCLIPath"
 

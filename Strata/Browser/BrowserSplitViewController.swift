@@ -39,6 +39,25 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     /// A location to land on once the account's containers have loaded.
     private var pendingRestoreLocation: BrowserLocation?
     private var hasAttemptedReconnect = false
+    /// A tab from the saved session, to reopen when this window first appears
+    /// instead of the single "last account" reconnect.
+    private var pendingSessionTab: BrowserSession.Tab?
+
+    /// What this tab would need to reopen as it is: nil until it's connected. A
+    /// restored tab that hasn't been brought to the front yet (so hasn't connected)
+    /// still reports the tab it's waiting to reopen, or it would drop out of the next
+    /// save.
+    var sessionTab: BrowserSession.Tab? {
+        if let pendingSessionTab { return pendingSessionTab }
+        guard let account else { return nil }
+        let location = content.location
+        return BrowserSession.Tab(account: account, container: location?.container, prefix: location?.prefix ?? "", mode: content.mode.rawValue)
+    }
+
+    /// Reopens a saved tab once the window appears.
+    func restore(_ tab: BrowserSession.Tab) {
+        pendingSessionTab = tab
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -120,6 +139,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
                 self.history.record(location)
             }
             StrataDefaults.lastLocation = location
+            (NSApp.delegate as? AppDelegate)?.scheduleSessionSave()
         }
 
         browseModeControl.target = self
@@ -140,7 +160,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         // window title, and there is no window yet at load time.
         guard !hasAttemptedReconnect else { return }
         hasAttemptedReconnect = true
-        reconnectToLastAccount()
+        if let tab = pendingSessionTab {
+            pendingSessionTab = nil
+            setBrowseMode(BrowseMode(rawValue: tab.mode) ?? .list)
+            pendingRestoreLocation = tab.location
+            connect(account: tab.account)
+        } else {
+            reconnectToLastAccount()
+        }
     }
 
     deinit {
@@ -206,6 +233,7 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         content.mode = mode
         browseModeControl.selectedSegment = mode.rawValue
         StrataDefaults.browseMode = mode.rawValue
+        (NSApp.delegate as? AppDelegate)?.scheduleSessionSave()
     }
 
     @objc func toggleObjectInspector(_ sender: Any?) {

@@ -231,7 +231,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   `resolvedAccountName()` (~line 453) prefers the selected row over a typed name.
   Clear the row selection when the manual field is edited, and vice versa.
 
-- [ ] **U12. Window and tab restoration.** `isRestorable = true` with no
+- [x] **U12. Window and tab restoration.** (PR #44) `isRestorable = true` with no
   restoration class or encoded state; three tabs across two accounts come back as
   one window. Encode account + location per window; restore via
   `NSWindowRestoration`.

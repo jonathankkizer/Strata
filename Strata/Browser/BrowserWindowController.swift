@@ -60,7 +60,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             defer: false
         )
         window.title = "Strata"
-        window.isRestorable = true
+        // Strata reopens its windows itself (see BrowserSession); AppKit's own
+        // restoration would have no way to rebuild them and would only get in the way.
+        window.isRestorable = false
         window.tabbingMode = .automatic
         window.tabbingIdentifier = "StrataBrowser"
         window.minSize = NSSize(width: 720, height: 480)

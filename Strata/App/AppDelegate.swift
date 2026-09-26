@@ -23,11 +23,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func openInitialWindow() {
+        let session = UpdateCoordinator.isRunningTests ? nil : StrataDefaults.session
         switch LaunchPlan.decide(
             reconnectOnLaunch: StrataDefaults.reconnectOnLaunch,
             lastAccount: StrataDefaults.lastAccount,
-            showWelcomeOnLaunch: StrataDefaults.showWelcomeOnLaunch
+            showWelcomeOnLaunch: StrataDefaults.showWelcomeOnLaunch,
+            session: session
         ) {
+        case .restoreSession:
+            restore(session?.sanitized() ?? BrowserSession(windows: []))
         case .welcome:
             showWelcomeWindow(nil)
         case .reconnectingBrowser, .emptyBrowser:
@@ -151,15 +155,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return controller
     }
 
-    @discardableResult
-    private func openBrowserWindow(sender: Any?, asTab: Bool = false) -> BrowserWindowController {
+    // MARK: - Session
+
+    /// Reopens the windows and tabs from last time, back to front so the frontmost
+    /// ends up in front, each tab reconnecting to its own account and folder.
+    private func restore(_ session: BrowserSession) {
+        for saved in session.windows.reversed() {
+            var tabWindows: [NSWindow] = []
+            for tab in saved.tabs {
+                let controller = makeBrowserWindowController()
+                controller.browser.restore(tab)
+                guard let window = controller.window else { continue }
+                if let first = tabWindows.first {
+                    first.addTabbedWindow(window, ordered: .above)
+                } else {
+                    if let frame = saved.frame { window.setFrame(from: frame) }
+                    controller.showWindow(nil)
+                }
+                tabWindows.append(window)
+            }
+            if saved.selectedTab < tabWindows.count {
+                tabWindows[saved.selectedTab].makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    /// The browser windows as they are now: front to back, tabs in tab-bar order.
+    private func captureSession() -> BrowserSession {
+        var seen = Set<ObjectIdentifier>()
+        var windows: [BrowserSession.Window] = []
+        for window in NSApp.orderedWindows where window.contentViewController is BrowserSplitViewController {
+            guard !seen.contains(ObjectIdentifier(window)) else { continue }
+            let group = window.tabbedWindows ?? [window]
+            group.forEach { seen.insert(ObjectIdentifier($0)) }
+            var tabs: [BrowserSession.Tab] = []
+            var selected = 0
+            for tabWindow in group {
+                guard let tab = (tabWindow.contentViewController as? BrowserSplitViewController)?.sessionTab else { continue }
+                if tabWindow === window.tabGroup?.selectedWindow { selected = tabs.count }
+                tabs.append(tab)
+            }
+            guard !tabs.isEmpty else { continue }
+            windows.append(.init(tabs: tabs, selectedTab: selected, frame: window.frameDescriptor))
+        }
+        return BrowserSession(windows: windows)
+    }
+
+    private var sessionSave: DispatchWorkItem?
+
+    /// Saves the session shortly after a change — every navigation would be a lot of
+    /// writes, and quitting saves regardless. Saving as you go means a crash or a
+    /// force-quit still reopens close to where you were.
+    func scheduleSessionSave() {
+        // The unit tests run inside the app; their windows aren't a session to keep.
+        guard !UpdateCoordinator.isRunningTests else { return }
+        sessionSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            StrataDefaults.session = self.captureSession()
+        }
+        sessionSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        sessionSave?.cancel()
+        guard !UpdateCoordinator.isRunningTests else { return }
+        StrataDefaults.session = captureSession()
+    }
+
+    private func makeBrowserWindowController() -> BrowserWindowController {
         // The first open window owns the saved frame; the rest cascade off it.
         let controller = BrowserWindowController(isPrimary: browserWindowControllers.isEmpty)
         browserWindowControllers.append(controller)
         controller.onWindowClose = { [weak self, weak controller] in
             guard let self, let controller else { return }
             self.browserWindowControllers.removeAll { $0 === controller }
+            self.scheduleSessionSave()
         }
+        return controller
+    }
+
+    @discardableResult
+    private func openBrowserWindow(sender: Any?, asTab: Bool = false) -> BrowserWindowController {
+        let controller = makeBrowserWindowController()
         // The Welcome window is not a tabbing peer; tabbing onto it would be nonsense.
         if asTab, let keyWindow = NSApp.keyWindow,
            keyWindow.contentViewController is BrowserSplitViewController,

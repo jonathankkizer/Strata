@@ -275,7 +275,7 @@ private final class GeneralPreferencesViewController: PreferencePaneViewControll
 
     private func makeStartupBox() -> NSBox {
         let checkbox = NSButton(
-            checkboxWithTitle: "Reconnect to the last account on launch",
+            checkboxWithTitle: "Reopen windows and tabs on launch",
             target: self,
             action: #selector(reconnectOnLaunchChanged(_:))
         )
@@ -290,8 +290,8 @@ private final class GeneralPreferencesViewController: PreferencePaneViewControll
 
         return makeBox(titled: "Startup", content: [
             setting(checkbox, caption:
-                "Reopens the account and folder you were last browsing. Credentials are "
-                + "never stored; Strata asks the Azure or AWS CLI each time."
+                "Each window and tab goes back to the account and folder it was showing. "
+                + "Credentials are never stored; Strata asks the Azure or AWS CLI each time."
             ),
             setting(welcomeCheckbox, caption:
                 "Only when there's nothing to reconnect to — reconnecting takes "
