@@ -278,6 +278,17 @@ final class ConnectAccountViewController: NSViewController {
         fallbackStack.edgeInsets = NSEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)
         fallbackStack.translatesAutoresizingMaskIntoConstraints = false
         fallbackStack.addArrangedSubview(fallbackLabel)
+
+        // The message often says to fix something in Terminal and try again; this is
+        // the "again", without switching providers back and forth to get it.
+        let tryAgain = NSButton(title: "Try Again", target: self, action: #selector(tryAgain(_:)))
+        tryAgain.bezelStyle = .rounded
+        tryAgain.controlSize = .small
+        fallbackStack.addArrangedSubview(tryAgain)
+    }
+
+    @objc private func tryAgain(_ sender: Any?) {
+        reload()
     }
 
     // MARK: - State transitions
@@ -441,7 +452,12 @@ final class ConnectAccountViewController: NSViewController {
 
     // MARK: - Connect / Cancel
 
+    /// Typing a name takes over from a highlighted row. Connect used to prefer the row,
+    /// so typing "prodacct" and pressing Return connected to whatever was highlighted.
     @objc private func manualFieldChanged() {
+        if !manualField.stringValue.isEmpty, tableView.selectedRow >= 0 {
+            tableView.deselectAll(nil)
+        }
         updateConnectEnabled()
     }
 
@@ -514,6 +530,9 @@ extension ConnectAccountViewController: NSTableViewDataSource, NSTableViewDelega
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        // And picking a row takes over from a typed name, so there's only ever one
+        // candidate for Connect to act on.
+        if tableView.selectedRow >= 0 { manualField.stringValue = "" }
         updateConnectEnabled()
     }
 }

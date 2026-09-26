@@ -78,6 +78,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openBrowserWindow(sender: sender, asTab: true)
     }
 
+    /// The tab bar's + button sends this up the responder chain; without it the
+    /// button isn't shown.
+    @objc func newWindowForTab(_ sender: Any?) {
+        newBrowserTab(sender)
+    }
+
+    @objc func showStrataHelp(_ sender: Any?) {
+        NSWorkspace.shared.open(URL(string: "https://github.com/jonathankkizer/Strata#readme")!)
+    }
+
     @objc func checkForUpdates(_ sender: Any?) {
         updateCoordinator.checkManually()
     }

@@ -788,13 +788,20 @@ extension BrowserSplitViewController {
         true
     }
 
+    // Quick Look calls these on the main thread, but they're declared nonisolated,
+    // and Swift 6 warns (and a later language mode will refuse) about touching the
+    // panel's main-actor properties from them without saying so.
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = quickLook
-        panel.delegate = quickLook
+        MainActor.assumeIsolated {
+            panel.dataSource = quickLook
+            panel.delegate = quickLook
+        }
     }
 
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = nil
-        panel.delegate = nil
+        MainActor.assumeIsolated {
+            panel.dataSource = nil
+            panel.delegate = nil
+        }
     }
 }

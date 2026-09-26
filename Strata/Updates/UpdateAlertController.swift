@@ -31,6 +31,8 @@ struct UpdateAlertController {
             """
         alert.addButton(withTitle: "Check Automatically")
         alert.addButton(withTitle: "Not Now")
+        // NSAlert only gives Escape to a button titled Cancel or Don't Save.
+        alert.buttons[1].keyEquivalent = "\u{1b}"
 
         return alert.runModal() == .alertFirstButtonReturn ? .enable : .decline
     }
@@ -52,6 +54,7 @@ struct UpdateAlertController {
 
         alert.addButton(withTitle: "View Release on GitHub\u{2026}")
         alert.addButton(withTitle: "Later")
+        alert.buttons[1].keyEquivalent = "\u{1b}"
         // Only offered on a check the user didn't ask for. Someone who just chose
         // "Check for Updates…" wants this version's answer, not to mute it.
         if offerSkip {
