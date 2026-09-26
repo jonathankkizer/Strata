@@ -502,6 +502,7 @@ private final class ColumnNameCellView: NSTableCellView {
     }
 
     private func build() {
+        label.allowsExpansionToolTips = true
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.setContentHuggingPriority(.required, for: .horizontal)
         icon.imageScaling = .scaleProportionallyUpOrDown

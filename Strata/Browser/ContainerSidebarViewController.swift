@@ -219,7 +219,9 @@ final class ContainerSidebarViewController: NSViewController, NSOutlineViewDataS
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         if let group = item as? SidebarGroup {
-            return groupCell(text: group.title.uppercased())
+            // Title case, as sidebars have had since Big Sur; all-caps headers are the
+            // older look.
+            return groupCell(text: group.title)
         }
         if let node = item as? SidebarContainerNode {
             return containerCell(text: node.container.name)
@@ -423,7 +425,7 @@ final class ContainerSidebarViewController: NSViewController, NSOutlineViewDataS
             cell.imageView?.image = icon
             cell.imageView?.contentTintColor = nil
         }
-        cell.toolTip = "\(favorite.account) — \(favorite.location.path)"
+        cell.toolTip = "\(favorite.account.qualifiedName) \u{2014} \(favorite.location.path)"
         return cell
     }
 

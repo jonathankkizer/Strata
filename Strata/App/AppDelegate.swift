@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openInitialWindow()
         NSApp.activate()
         updateCoordinator.start()
+        Task.detached(priority: .background) { PreviewCache.prune() }
     }
 
     private func openInitialWindow() {

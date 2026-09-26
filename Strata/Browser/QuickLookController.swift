@@ -68,6 +68,7 @@ final class QuickLookController: NSObject {
         // A cache hit is the common case once you've looked at something; show it
         // without a round trip so Space feels instant.
         if FileManager.default.fileExists(atPath: destination.path) {
+            PreviewCache.markUsed(destination)
             install(BlobPreviewItem(url: destination, title: title), openingPanel: openingPanel)
             return
         }

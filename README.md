@@ -25,8 +25,15 @@ Folder — and it reopens the account and folder you were last in. Save places t
 Finder-style Favorites section in the sidebar, across accounts. A unit-test suite
 covers the prediction/parsing/sort/naming/history/favorites logic.
 
-**AWS S3 is still stubbed** — the biggest functional gap. See
-[`ROADMAP.md`](ROADMAP.md) for the near-term backlog and known gaps.
+**AWS S3 works too**, through the same browser: pick a profile from `~/.aws/config`
+and Strata signs in with the AWS CLI (SSO, assume-role and static keys all work,
+since the CLI resolves them). Buckets in other regions are found automatically, and
+uploads predict whether they'll emit `s3:ObjectCreated:Put` or
+`:CompleteMultipartUpload`. Delete works on both clouds, and says whether the
+account will keep what you delete.
+
+See [`ROADMAP.md`](ROADMAP.md) for the backlog and [`TODO.md`](TODO.md) for the
+defects and polish items from the September 2026 review.
 
 ## Design principles
 

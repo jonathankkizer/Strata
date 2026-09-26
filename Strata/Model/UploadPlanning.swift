@@ -35,10 +35,16 @@ enum UploadPlanning {
                     guard let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey]),
                           values.isDirectory != true else { continue }
 
-                    let resolvedPath = fileURL.resolvingSymlinksInPath().path
+                    // The key comes from where the file sits in the tree, with only its
+                    // directory resolved (for /var vs /private/var). Resolving the file
+                    // itself keyed a symlink by its target's path: the link's own name
+                    // was lost, and the target was uploaded twice under one key.
+                    let sitePath = fileURL.deletingLastPathComponent().resolvingSymlinksInPath().path
+                        + "/" + fileURL.lastPathComponent
                     // Files symlinked to outside the dropped tree are skipped.
-                    guard resolvedPath.hasPrefix(basePath) else { continue }
-                    let relativePath = String(resolvedPath.dropFirst(basePath.count))
+                    guard sitePath.hasPrefix(basePath),
+                          fileURL.resolvingSymlinksInPath().path.hasPrefix(basePath) else { continue }
+                    let relativePath = String(sitePath.dropFirst(basePath.count))
                     let key = prefix + url.lastPathComponent + "/" + relativePath
                     let size = values.fileSize.map(Int64.init) ?? 0
                     let contentType = UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType

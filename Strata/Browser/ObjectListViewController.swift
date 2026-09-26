@@ -70,6 +70,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
+        // "Today at 3:04 PM", as the Finder shows it.
+        formatter.doesRelativeDateFormatting = true
         return formatter
     }()
 
@@ -131,7 +133,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         addColumn(.size, title: "Size", width: 90, minWidth: 60, alignment: .right)
         addColumn(.tier, title: "Tier", width: 70, minWidth: 50, alignment: .left)
         addColumn(.modified, title: "Date Modified", width: 170, minWidth: 120, alignment: .left)
-        addColumn(.kind, title: "Content Type", width: 170, minWidth: 100, alignment: .left)
+        addColumn(.kind, title: "Kind", width: 170, minWidth: 100, alignment: .left)
 
         tableView.dataSource = self
         tableView.delegate = self
@@ -489,6 +491,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     /// Moves to the parent folder. No-op at the container root.
     func navigateUp() {
         guard canNavigateUp, let location else { return }
+        // Land on the folder we came out of, as the Finder does.
+        pendingSelectKey = location.prefix
         let segments = location.segments
         // Drop the last segment; re-join remaining ones as a slash-terminated prefix.
         let parentPrefix = segments.dropLast().map { $0 + "/" }.joined()
@@ -548,7 +552,10 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         case .modified:
             return textCell(item.lastModified.map { dateFormatter.string(from: $0) } ?? "")
         case .kind:
-            return textCell(item.isPrefix ? "Folder" : (item.contentType ?? "\u{2014}"))
+            // The Finder's words, with the raw content type a hover away.
+            let cell = textCell(item.kindDescription)
+            cell.toolTip = item.isPrefix ? nil : item.contentType
+            return cell
         }
     }
 
@@ -581,6 +588,9 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         }()
         cell.textField?.stringValue = string
         cell.textField?.alignment = alignment
+        // Cells are shared between columns, so a tooltip set for one (Kind) mustn't
+        // follow the cell into another.
+        cell.toolTip = nil
         cell.textField?.textColor = .labelColor
         return cell
     }
@@ -597,6 +607,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         let textField = NSTextField(labelWithString: "")
         textField.lineBreakMode = .byTruncatingTail
+        // Hovering a truncated name shows all of it, as in the Finder.
+        textField.allowsExpansionToolTips = true
         textField.translatesAutoresizingMaskIntoConstraints = false
 
         let cell = NSTableCellView()

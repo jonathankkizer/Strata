@@ -25,13 +25,6 @@ enum BlobIcon {
     /// The best UTType for a blob: its MIME content type if known, else the
     /// filename extension, else generic data.
     static func utType(for object: StorageObject) -> UTType {
-        if let mime = object.contentType, let type = UTType(mimeType: mime) {
-            return type
-        }
-        let ext = (object.key as NSString).pathExtension
-        if !ext.isEmpty, let type = UTType(filenameExtension: ext) {
-            return type
-        }
-        return .data
+        object.utType
     }
 }

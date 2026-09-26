@@ -41,6 +41,44 @@ enum PreviewCache {
         !object.isPrefix && object.size <= maximumPreviewBytes
     }
 
+    /// How much the cache keeps before the oldest previews go.
+    static let sizeLimit: Int64 = 512 * 1024 * 1024
+
+    /// Removes the least recently used previews until the cache is under `limit`.
+    /// Each preview lives in its own folder, and a folder's modification date is
+    /// bumped whenever it's shown again (`markUsed`), so that date is "last used".
+    ///
+    /// The Caches directory is the system's to reclaim, but it does so only under
+    /// pressure; without this, every version of everything ever previewed stayed.
+    static func prune(_ directory: URL = directory, limit: Int64 = sizeLimit, fileManager: FileManager = .default) {
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .totalFileAllocatedSizeKey, .isDirectoryKey]
+        guard let folders = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys) else { return }
+
+        var entries: [(url: URL, used: Date, bytes: Int64)] = []
+        for folder in folders {
+            let used = (try? folder.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            var bytes: Int64 = 0
+            if let files = fileManager.enumerator(at: folder, includingPropertiesForKeys: [.totalFileAllocatedSizeKey]) {
+                for case let file as URL in files {
+                    bytes += Int64((try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+                }
+            }
+            entries.append((folder, used, bytes))
+        }
+
+        var total = entries.reduce(0) { $0 + $1.bytes }
+        for entry in entries.sorted(by: { $0.used < $1.used }) where total > limit {
+            if (try? fileManager.removeItem(at: entry.url)) != nil {
+                total -= entry.bytes
+            }
+        }
+    }
+
+    /// Records that a cached preview was just shown, so pruning keeps it.
+    static func markUsed(_ file: URL, fileManager: FileManager = .default) {
+        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: file.deletingLastPathComponent().path)
+    }
+
     /// The root of the preview cache: `~/Library/Caches/<bundle id>/QuickLook`.
     static var directory: URL {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
