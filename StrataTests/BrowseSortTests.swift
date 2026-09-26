@@ -57,3 +57,38 @@ struct BrowseSortTests {
         #expect(sortedKeys(tierItems, BrowseSort(key: .tier, ascending: true)) == ["archive", "cool", "hot"])
     }
 }
+
+@Suite("Browse sort ordering")
+struct BrowseSortOrderingTests {
+
+    private func blob(_ key: String, size: Int64 = 0) -> StorageObject {
+        StorageObject(key: key, size: size)
+    }
+
+    /// `sort(by:)` requires a strict ordering. The old descending comparator said equal
+    /// items were in order both ways round, which scrambled rows of equal size.
+    @Test("Descending never calls equal items ordered both ways")
+    func strictDescending() {
+        for key in SortKey.allCases {
+            let sort = BrowseSort(key: key, ascending: false)
+            let a = blob("same", size: 5)
+            #expect(!sort.areInOrder(a, a))
+        }
+    }
+
+    @Test("Equal sizes fall back to name order, in both directions")
+    func tieBreak() {
+        let items = [blob("b", size: 1), blob("a", size: 1), blob("c", size: 1)]
+        #expect(items.sorted(by: BrowseSort(key: .size, ascending: true).areInOrder).map(\.key) == ["a", "b", "c"])
+        #expect(items.sorted(by: BrowseSort(key: .size, ascending: false).areInOrder).map(\.key) == ["a", "b", "c"])
+    }
+
+    @Test("Merging a page gives the same result as sorting everything")
+    func mergeMatchesSort() {
+        let sort = BrowseSort(key: .size, ascending: false)
+        let first = (0..<50).map { blob("k\($0)", size: Int64($0 % 7)) }
+        let second = (50..<120).map { blob("k\($0)", size: Int64($0 % 5)) } + [StorageObject(key: "dir/", isPrefix: true)]
+        let merged = sort.merging(second, into: first.sorted(by: sort.areInOrder))
+        #expect(merged.map(\.key) == (first + second).sorted(by: sort.areInOrder).map(\.key))
+    }
+}

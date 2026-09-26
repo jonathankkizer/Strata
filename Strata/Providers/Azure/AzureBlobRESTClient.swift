@@ -135,7 +135,12 @@ struct AzureBlobRESTClient: Sendable {
     /// Lists blobs under `prefix` in `container`. With `delimiter = "/"` the service
     /// collapses everything below the next slash into BlobPrefix "folders", which is
     /// what the hierarchical browser wants. Follows NextMarker pages.
-    func listAllBlobs(inContainer container: String, prefix: String = "", delimiter: String? = "/") async throws -> [StorageObject] {
+    func listAllBlobs(
+        inContainer container: String,
+        prefix: String = "",
+        delimiter: String? = "/",
+        onPage: (@Sendable ([StorageObject]) async -> Void)? = nil
+    ) async throws -> [StorageObject] {
         var results: [StorageObject] = []
         var marker: String?
         var page = 0
@@ -151,6 +156,7 @@ struct AzureBlobRESTClient: Sendable {
             let data = try await get(endpoint.url(container: container, query: query))
             let parsed = try BlobListXMLParser().parse(data)
             results.append(contentsOf: parsed.objects)
+            await onPage?(parsed.objects)
             marker = parsed.nextMarker
             page += 1
         } while marker != nil && page < Self.maxPages

@@ -36,6 +36,15 @@ protocol StorageProvider: Sendable {
 
     func listContainers() async throws -> [StorageContainer]
     func listObjects(in container: StorageContainer, prefix: String) async throws -> [StorageObject]
+    /// The same listing, handed over page by page. A requirement rather than only an
+    /// extension method, so a provider's own paging is what runs when called through
+    /// `any StorageProvider` — an extension-only method would always dispatch to the
+    /// one-page default.
+    func listObjects(
+        in container: StorageContainer,
+        prefix: String,
+        onPage: @escaping @Sendable ([StorageObject]) async -> Void
+    ) async throws
 
     /// Full metadata for a single object (a HEAD / Get Blob Properties).
     func fetchMetadata(for object: StorageObject, in container: StorageContainer) async throws -> ObjectMetadata
@@ -81,6 +90,17 @@ extension StorageProvider {
     /// parameter threaded alongside it, and without assuming a cloud.
     var account: ProviderAccount {
         ProviderAccount(kind: kind, name: displayName)
+    }
+
+    /// Lists as `listObjects` does, handing each page to `onPage` as it arrives so a
+    /// large folder can start showing before the last page is in. Providers that page
+    /// override this; the default delivers everything as one page.
+    func listObjects(
+        in container: StorageContainer,
+        prefix: String,
+        onPage: @escaping @Sendable ([StorageObject]) async -> Void
+    ) async throws {
+        await onPage(try await listObjects(in: container, prefix: prefix))
     }
 }
 

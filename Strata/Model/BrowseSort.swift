@@ -27,21 +27,59 @@ struct BrowseSort: Equatable, Sendable {
     var ascending: Bool = true
 
     /// Orders two objects for this sort, with folders always kept before blobs.
+    ///
+    /// A strict ordering, as `sort(by:)` requires: two items that tie on the sort field
+    /// are never "in order" both ways round. Negating the ascending answer for a
+    /// descending sort broke that (it said yes for equal items), which scrambled rows
+    /// of equal size or date. Ties fall back to the name, then the raw key, so equal
+    /// rows also keep a stable, Finder-like order.
     func areInOrder(_ lhs: StorageObject, _ rhs: StorageObject) -> Bool {
         if lhs.isPrefix != rhs.isPrefix { return lhs.isPrefix }
-        let ordered: Bool
+        let primary = compare(lhs, rhs)
+        if primary != .orderedSame {
+            return ascending ? primary == .orderedAscending : primary == .orderedDescending
+        }
+        let byName = lhs.key.localizedStandardCompare(rhs.key)
+        if byName != .orderedSame { return byName == .orderedAscending }
+        return lhs.key < rhs.key
+    }
+
+    private func compare(_ lhs: StorageObject, _ rhs: StorageObject) -> ComparisonResult {
         switch key {
         case .name:
-            ordered = lhs.key.localizedStandardCompare(rhs.key) == .orderedAscending
+            return lhs.key.localizedStandardCompare(rhs.key)
         case .kind:
-            ordered = (lhs.contentType ?? "").localizedStandardCompare(rhs.contentType ?? "") == .orderedAscending
+            return (lhs.contentType ?? "").localizedStandardCompare(rhs.contentType ?? "")
         case .dateModified:
-            ordered = (lhs.lastModified ?? .distantPast) < (rhs.lastModified ?? .distantPast)
+            return Self.compare(lhs.lastModified ?? .distantPast, rhs.lastModified ?? .distantPast)
         case .size:
-            ordered = lhs.size < rhs.size
+            return Self.compare(lhs.size, rhs.size)
         case .tier:
-            ordered = (lhs.storageClass ?? "").localizedStandardCompare(rhs.storageClass ?? "") == .orderedAscending
+            return (lhs.storageClass ?? "").localizedStandardCompare(rhs.storageClass ?? "")
         }
-        return ascending ? ordered : !ordered
+    }
+
+    private static func compare<T: Comparable>(_ lhs: T, _ rhs: T) -> ComparisonResult {
+        lhs < rhs ? .orderedAscending : (lhs > rhs ? .orderedDescending : .orderedSame)
+    }
+
+    /// Merges a newly arrived, unsorted page into rows already in this order. Sorting
+    /// the page and merging is linear in the rows held, where re-sorting everything on
+    /// each of a hundred pages would not be.
+    func merging(_ page: [StorageObject], into sorted: [StorageObject]) -> [StorageObject] {
+        let incoming = page.sorted(by: areInOrder)
+        var merged: [StorageObject] = []
+        merged.reserveCapacity(sorted.count + incoming.count)
+        var i = sorted.startIndex, j = incoming.startIndex
+        while i < sorted.endIndex, j < incoming.endIndex {
+            if areInOrder(incoming[j], sorted[i]) {
+                merged.append(incoming[j]); j += 1
+            } else {
+                merged.append(sorted[i]); i += 1
+            }
+        }
+        merged.append(contentsOf: sorted[i...])
+        merged.append(contentsOf: incoming[j...])
+        return merged
     }
 }

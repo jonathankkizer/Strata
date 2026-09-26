@@ -66,6 +66,18 @@ final class S3Provider: StorageProvider {
         }
     }
 
+    func listObjects(
+        in container: StorageContainer,
+        prefix: String,
+        onPage: @escaping @Sendable ([StorageObject]) async -> Void
+    ) async throws {
+        // A wrong-region answer comes on the first request, before any page has been
+        // handed over, so the regional retry can't deliver a page twice.
+        _ = try await withRegionalClient(for: container.name) { client in
+            try await client.listAllObjects(bucket: container.name, prefix: prefix, onPage: onPage)
+        }
+    }
+
     func fetchMetadata(for object: StorageObject, in container: StorageContainer) async throws -> ObjectMetadata {
         try await withRegionalClient(for: container.name) { client in
             try await client.headObject(bucket: container.name, key: object.key)

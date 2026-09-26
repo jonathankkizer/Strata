@@ -52,7 +52,14 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     private var items: [StorageObject] = []
     private var loadToken = 0
+    private var loadTask: Task<Void, Never>?
+    /// The location whose rows are on screen. Reloading that same location is a
+    /// refresh, which keeps the rows up until the new listing is in.
+    private var shownLocation: BrowserLocation?
     private var pendingSelectKey: String?
+    /// The selection last reported to `onSelectionChange`, so re-selecting the same
+    /// objects after a reload doesn't make the inspector fetch them again.
+    private var reportedSelectionKeys: [String] = []
 
     private let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -293,49 +300,79 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         reload()
     }
 
+    /// Loads the current location. Navigating somewhere new shows rows page by page
+    /// as they arrive. Reloading the location already on screen (⌘R, or after an
+    /// upload) keeps the old rows, selection and scroll position until the new
+    /// listing is complete, instead of blanking the table.
     func reload() {
-        guard let provider, let location else { return }
-
+        loadTask?.cancel()
         loadToken += 1
+        guard let provider, let location else {
+            shownLocation = nil
+            return
+        }
         let token = loadToken
+        let container = StorageContainer(name: location.container)
+        let prefix = location.prefix
+
+        if location == shownLocation, !items.isEmpty {
+            let snapshot = ViewSnapshot(of: self)
+            loadTask = Task { @MainActor in
+                do {
+                    let objects = try await provider.listObjects(in: container, prefix: prefix)
+                    guard token == self.loadToken else { return }
+                    self.items = objects.sorted(by: self.currentSort.areInOrder)
+                    self.tableView.reloadData()
+                    snapshot.restore(in: self)
+                    self.finishLoading()
+                } catch {
+                    guard token == self.loadToken else { return }
+                    self.present(error)
+                }
+            }
+            return
+        }
+
+        shownLocation = location
         hideEmptyState()
         items = []
         tableView.reloadData()
         spinner.startAnimation(nil)
-
-        let container = StorageContainer(name: location.container)
-        let prefix = location.prefix
-
-        Task { @MainActor in
-            let result: Result<[StorageObject], Error>
+        loadTask = Task { @MainActor in
             do {
-                result = .success(try await provider.listObjects(in: container, prefix: prefix))
+                try await provider.listObjects(in: container, prefix: prefix) { page in
+                    await MainActor.run {
+                        guard token == self.loadToken else { return }
+                        self.appendPage(page)
+                    }
+                }
+                guard token == self.loadToken else { return }
+                self.finishLoading()
             } catch {
-                result = .failure(error)
-            }
-
-            guard token == self.loadToken else { return }   // a newer navigation superseded this load
-            self.spinner.stopAnimation(nil)
-
-            switch result {
-            case .success(let objects):
-                self.apply(objects, prefix: prefix)
-            case .failure(let error):
+                guard token == self.loadToken else { return }   // superseded, or cancelled by that
+                self.spinner.stopAnimation(nil)
                 self.present(error)
             }
         }
     }
 
-    private func apply(_ objects: [StorageObject], prefix: String) {
-        items = objects
-        sortItems()
+    /// Merges a page into the rows already shown, keeping whatever is selected.
+    private func appendPage(_ page: [StorageObject]) {
+        guard !page.isEmpty else { return }
+        spinner.stopAnimation(nil)
+        let selected = Set(selectedObjects().map(\.key))
+        items = currentSort.merging(page, into: items)
         tableView.reloadData()
-        if objects.isEmpty {
+        selectRows(withKeys: selected)
+    }
+
+    private func finishLoading() {
+        spinner.stopAnimation(nil)
+        if items.isEmpty {
             showEmptyState(symbol: "tray", title: "This Folder Is Empty", subtitle: nil, actionTitle: nil, action: nil)
         } else {
             hideEmptyState()
         }
-
         if let key = pendingSelectKey, let index = items.firstIndex(where: { $0.key == key }) {
             tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             tableView.scrollRowToVisible(index)
@@ -343,8 +380,50 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         pendingSelectKey = nil
     }
 
+    private func selectRows(withKeys keys: Set<String>) {
+        guard !keys.isEmpty else { return }
+        let indexes = IndexSet(items.indices.filter { keys.contains(items[$0].key) })
+        tableView.selectRowIndexes(indexes, byExtendingSelection: false)
+    }
+
+    /// What a refresh should put back: the selection, and the row at the top of the
+    /// view with how far it was scrolled past. Rows are matched by key, since their
+    /// positions can change when objects are added or removed above them.
+    private struct ViewSnapshot {
+        let selectedKeys: Set<String>
+        let topKey: String?
+        let topOffset: CGFloat
+
+        @MainActor init(of list: ObjectListViewController) {
+            selectedKeys = Set(list.selectedObjects().map(\.key))
+            let visible = list.tableView.visibleRect
+            let topRow = list.tableView.row(at: NSPoint(x: visible.minX, y: visible.minY))
+            if topRow >= 0, topRow < list.items.count {
+                topKey = list.items[topRow].key
+                topOffset = visible.minY - list.tableView.rect(ofRow: topRow).minY
+            } else {
+                topKey = nil
+                topOffset = 0
+            }
+        }
+
+        @MainActor func restore(in list: ObjectListViewController) {
+            list.selectRows(withKeys: selectedKeys)
+            guard let topKey, let row = list.items.firstIndex(where: { $0.key == topKey }) else { return }
+            let clip = list.scrollView.contentView
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: list.tableView.rect(ofRow: row).minY + topOffset))
+            list.scrollView.reflectScrolledClipView(clip)
+        }
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
-        onSelectionChange?(selectedObjects())
+        let selection = selectedObjects()
+        // Keyed by ETag too, so a refresh that brings in a newer version of the same
+        // blob still updates the inspector.
+        let keys = selection.map { "\($0.key)\u{0}\($0.etag ?? "")" }
+        guard keys != reportedSelectionKeys else { return }
+        reportedSelectionKeys = keys
+        onSelectionChange?(selection)
     }
 
     private func present(_ error: Error) {
@@ -634,6 +713,11 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     /// Returns the objects for the current selection, preferring clicked row when
     /// it is outside the selection (handled by menuNeedsUpdate before this runs).
+    /// The rows on screen, in order. For tests; the table is private.
+    var displayedObjects: [StorageObject] { items }
+
+    func select(keys: Set<String>) { selectRows(withKeys: keys) }
+
     func selectedObjects() -> [StorageObject] {
         tableView.selectedRowIndexes.compactMap { idx in
             idx < items.count ? items[idx] : nil
