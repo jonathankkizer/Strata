@@ -291,3 +291,17 @@ final class RetryStubURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
 }
+
+@Suite("Running a CLI, when something else keeps its output open")
+struct CLIProcessBackgroundChildTests {
+
+    /// A CLI can leave a background process holding its stdout. Reading to end of
+    /// file would then wait for that process; the run must still come back.
+    @Test("A background child holding the pipe doesn't hold up the result")
+    func backgroundChild() async throws {
+        let start = ContinuousClock.now
+        let data = try await CLIProcess.run(binary: "/bin/sh", arguments: ["-c", "echo done; (sleep 20 &)"])
+        #expect(String(data: data, encoding: .utf8) == "done\n")
+        #expect(ContinuousClock.now - start < .seconds(6))
+    }
+}
