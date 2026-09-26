@@ -74,7 +74,17 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }()
 
     override func loadView() {
-        view = NSView()
+        // The root accepts dropped files too. An empty folder is exactly where people
+        // drag files to, and the table that normally takes them is hidden then; drags
+        // over the empty-state message find this view by walking up from it.
+        let root = FileDropView()
+        root.canAcceptDrop = { [weak self] in
+            guard let self else { return false }
+            return self.location != nil && self.scrollView.isHidden
+        }
+        root.onDrop = { [weak self] urls in self?.onDropFiles?(urls) }
+        root.registerForDraggedTypes([.fileURL])
+        view = root
         view.translatesAutoresizingMaskIntoConstraints = false
 
         configureTable()
@@ -432,8 +442,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
             symbol: "exclamationmark.triangle",
             title: "Couldn\u{2019}t Load",
             subtitle: StorageErrorText.message(for: error, kind: kind).full,
-            actionTitle: nil,
-            action: nil
+            actionTitle: "Try Again",
+            action: #selector(BrowserSplitViewController.refreshListing(_:))
         )
     }
 
@@ -833,6 +843,31 @@ extension ObjectListViewController: NSUserInterfaceValidations {
         if item.action == #selector(copy(_:)) {
             return tableView.selectedRow >= 0
         }
+        return true
+    }
+}
+
+/// A view that takes files dragged from the Finder, when `canAcceptDrop` says so.
+private final class FileDropView: NSView {
+    var canAcceptDrop: () -> Bool = { false }
+    var onDrop: ([URL]) -> Void = { _ in }
+
+    private func fileURLs(in info: any NSDraggingInfo) -> [URL] {
+        info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        canAcceptDrop() && !fileURLs(in: sender).isEmpty ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let urls = fileURLs(in: sender)
+        guard canAcceptDrop(), !urls.isEmpty else { return false }
+        onDrop(urls)
         return true
     }
 }

@@ -80,6 +80,9 @@ final class QuickLookController: NSObject {
                 )
                 try await provider.download(fromKey: object.key, in: container, to: destination, onProgress: nil)
             } catch {
+                // Arrowing through a list with the panel open cancels each fetch as the
+                // next starts; that's not a failure worth a sound.
+                guard let self, token == self.fetchToken, !Task.isCancelled else { return }
                 // A failed preview is not worth an alert: the row is still selected,
                 // and the inspector already reports what went wrong with the object.
                 NSSound.beep()

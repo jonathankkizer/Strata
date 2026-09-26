@@ -182,7 +182,9 @@ enum MainMenu {
 
     private static func helpMenuItem() -> NSMenuItem {
         submenu("Help") { menu in
-            menu.addItem(withTitle: "Strata Help", action: #selector(NSApplication.showHelp(_:)), keyEquivalent: "?")
+            // There's no Help Book; the README is the manual. Without this the item
+            // says "Help isn't available for Strata."
+            menu.addItem(withTitle: "Strata Help", action: #selector(AppDelegate.showStrataHelp(_:)), keyEquivalent: "?")
             NSApp.helpMenu = menu
         }
     }

@@ -101,7 +101,11 @@ final class DeleteConfirmationViewController: NSViewController {
         text.spacing = 4
         text.setCustomSpacing(8, after: detailLabel)
 
-        let root = NSView()
+        // When the delete can't be undone, Return belongs to Cancel, so Escape can't be
+        // Cancel's key equivalent too. The root view catches it instead: whatever the
+        // left-hand button does right now (Cancel, or Stop while deleting).
+        let root = EscapeCatchingView()
+        root.onEscape = { [weak self] in self?.cancelButton.performClick(nil) }
         for subview in [symbol, text, progress, buttons] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
@@ -143,7 +147,7 @@ final class DeleteConfirmationViewController: NSViewController {
             guard let self else { return }
 
             async let recoveryAnswer = provider.deletionRecovery(in: container)
-            let expanded = await expandFolders()
+            let (expanded, unlisted) = await expandFolders()
 
             self.recovery = await recoveryAnswer
             let plan = DeletionPlan.make(selection: selection, expandedKeys: expanded)
@@ -154,6 +158,14 @@ final class DeleteConfirmationViewController: NSViewController {
             self.recoveryLabel.stringValue = self.recovery.summary
             self.applyRecoveryStyling()
 
+            // A folder that couldn't be listed would be counted as empty and "deleted"
+            // as one marker, while everything in it stayed. Say so, and don't offer a
+            // delete that would report success for it.
+            if let folder = unlisted.first {
+                self.detailLabel.stringValue = "Couldn\u{2019}t list what\u{2019}s in \u{201C}\(folder)\u{201D}, so it can\u{2019}t be deleted."
+                self.deleteButton.isEnabled = false
+                return
+            }
             // Nothing to delete is not an error — an empty folder that turned out to be
             // only a prefix with nothing under it simply has no keys.
             self.deleteButton.isEnabled = !plan.isEmpty
@@ -161,15 +173,19 @@ final class DeleteConfirmationViewController: NSViewController {
         }
     }
 
-    /// Lists every key under each selected folder. A folder that can't be listed is left
-    /// with no children rather than failing the whole sheet: the objects the user could
-    /// see are still deletable, and the failure surfaces when the delete runs.
-    private func expandFolders() async -> [String: [StorageObject]] {
+    /// Lists every key under each selected folder, and names any folder that couldn't
+    /// be listed — treating it as empty would understate what the user is deleting.
+    private func expandFolders() async -> (expanded: [String: [StorageObject]], unlisted: [String]) {
         var expanded: [String: [StorageObject]] = [:]
+        var unlisted: [String] = []
         for folder in selection where folder.isPrefix {
-            expanded[folder.key] = (try? await provider.listAllKeys(under: folder.key, in: container)) ?? []
+            do {
+                expanded[folder.key] = try await provider.listAllKeys(under: folder.key, in: container)
+            } catch {
+                unlisted.append(DownloadPlanning.fileName(forKey: folder.key))
+            }
         }
-        return expanded
+        return (expanded, unlisted)
     }
 
     /// The safest button is the default one — but which button that is depends on what
@@ -236,5 +252,20 @@ final class DeleteConfirmationViewController: NSViewController {
     private func finish(_ outcome: Outcome) {
         dismiss(nil)
         onFinish(outcome)
+    }
+}
+
+/// A root view that turns Escape into a callback. Key equivalents reach views through
+/// `performKeyEquivalent`, which a sheet's content gets reliably; `cancelOperation`
+/// goes up the responder chain and can miss the view controller entirely.
+private final class EscapeCatchingView: NSView {
+    var onEscape: (() -> Void)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.keyCode == 53, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty, let onEscape {
+            onEscape()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }

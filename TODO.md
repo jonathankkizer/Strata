@@ -93,11 +93,12 @@ the cloud), and the CLIs run through `CLIProcess` (discovery, PATH, timeout,
 cancel). A refresh is shared by concurrent callers, so one caller's Stop doesn't
 kill the CLI for the others; the 60 s timeout bounds it instead.
 
-- [ ] **R0. The delete sheet under-reports when a folder can't be listed.**
+- [x] **R0. The delete sheet under-reports when a folder can't be listed.**
   `DeleteConfirmationViewController.expandFolders` turns a failed listing into
   "no children" (deliberately — the comment explains why), so the sheet says
   "1 object" for a folder of thousands. Nothing extra is deleted, but the count
-  is wrong. Show "Couldn't list the contents of X" in the sheet instead.
+  is wrong. Show "Couldn't list the contents of X" in the sheet instead. (PR #38:
+  says so and disables Delete.)
 
 - [x] **R1. No retries or backoff anywhere.** (PR #36 — per-request retries; resuming is split out as R1b below.) Nothing handles 429/503,
   `SlowDown`, `ServerBusy`, `Retry-After`, a network drop or sleep/wake. One
@@ -191,20 +192,24 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   true for equal elements. Swap operands instead, and tie-break on name so equal
   sizes/dates have a stable order.
 
-- [ ] **U5. Error states are dead ends.** List errors
+- [x] **U5. Error states are dead ends.** (PR #38 — list and picker get Try Again;
+  column errors got a tooltip in PR #35. A column still has no retry button.) List errors
   (`ObjectListViewController` ~lines 350-376) have no Try Again / Reconnect
   button; column errors (~lines 1048, 1145) are one truncated line with no
   tooltip; the connect picker's error says "try again" with no button
   (`ConnectAccountViewController` ~line 413). Add the buttons and tooltips.
 
-- [ ] **U6. Can't drop files onto an empty folder or an error page.**
+- [ ] **U6. Can't drop files onto an empty folder or an error page.** *Dropping
+  onto an empty folder done in PR #38;* drops onto folder rows and spring-loading
+  are still open.
   `showEmptyState` hides the scroll view, and the table is the only drop target.
   Register the empty-state view (or the root) for `.fileURL` and forward to
   `onDropFiles`. Related: drops only land on the current folder
   (`setDropRow(-1, .on)`, ~line 591) — accept drops on folder rows, add
   spring-loading.
 
-- [ ] **U7. Quick Look feedback.** Nothing visible happens while a large blob
+- [ ] **U7. Quick Look feedback.** *The spurious beep is fixed in PR #38;* showing
+  progress for a slow fetch is still open. Nothing visible happens while a large blob
   downloads; Space again restarts the fetch; arrowing with the panel open beeps on
   every step because a cancelled fetch beeps before the stale-token check
   (`QuickLookController` ~lines 75-90). Return silently on cancellation/stale;
@@ -222,7 +227,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   `allowsMultipleSelection = false` (~line 223). Allow multi-select (cull columns
   to the right when count ≠ 1); per-column `validateDrop`/`acceptDrop`.
 
-- [ ] **U11. Connect sheet can connect to the wrong account.**
+- [x] **U11. Connect sheet can connect to the wrong account.** (PR #38)
   `resolvedAccountName()` (~line 453) prefers the selected row over a typed name.
   Clear the row selection when the manual field is edited, and vice versa.
 
@@ -233,16 +238,17 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
 
 ## Tier 4 — finish
 
-- [ ] **F1. Sheets and alerts.** Escape doesn't cancel the delete sheet when the
+- [ ] **F1. Sheets and alerts.** *Escape fixed in PR #38;* the silent manual update
+  check and the consent prompt's timing are still open. Escape doesn't cancel the delete sheet when the
   delete is irreversible (`DeleteConfirmationViewController` ~line 186 — override
   `cancelOperation`). Escape doesn't hit "Not Now"/"Later" in
   `UpdateAlertController` (~lines 33, 54). Manual Check for Updates shows nothing
   for up to 10s. The update consent prompt (`UpdateCoordinator` ~lines 42-47,
   100-105) can appear over the Connect sheet or while inactive — guard it like the
   scheduled check.
-- [ ] **F2. Help.** ⌘? says "Help isn't available". Point it at the README /
+- [x] **F2. Help.** (PR #38) ⌘? says "Help isn't available". Point it at the README /
   GitHub page with `NSWorkspace.open`.
-- [ ] **F3. Toolbar and tabs.** No Back/Forward item group (Finder has it by
+- [ ] **F3. Toolbar and tabs.** *Tab bar + fixed in PR #38.* No Back/Forward item group (Finder has it by
   default); no Download/Delete items; tooltips repeat labels. Tab bar has no + (no
   `newWindowForTab(_:)`).
 - [ ] **F4. Finder parity in the browser.**
@@ -270,7 +276,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   Welcome window's checkbox leaves Settings stale).
 - [ ] **F6. Welcome window.** Return always means Connect even with a favorite
   selected; the "Reconnect to X" button is built once and goes stale.
-- [ ] **F7. About panel.** Empty `NSHumanReadableCopyright`; add Credits.rtf with
+- [ ] **F7. About panel.** *Copyright set in PR #38;* Credits.rtf still open. Empty `NSHumanReadableCopyright`; add Credits.rtf with
   the GitHub link.
 - [ ] **F8. Copy pass.** Literal backticks around `az login`
   (`BrowserSplitViewController` ~lines 788-790); straight vs curly apostrophes
@@ -281,7 +287,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   (`WelcomeWindowController` ~line 133). Run proposed wording past the author.
 - [ ] **F9. Localization.** Zero `String(localized:)`. Wrap user-facing strings,
   add a String Catalog, use plural variants instead of hand-rolled plurals.
-- [ ] **F10. Swift 6 isolation warnings.** `panel.dataSource`/`delegate` assigned
+- [x] **F10. Swift 6 isolation warnings.** (PR #38) `panel.dataSource`/`delegate` assigned
   from nonisolated `beginPreviewPanelControl`/`end…`
   (`BrowserSplitViewController` ~lines 807-813).
 - [ ] **F11. Preview cache never evicts.** Add an LRU size cap, prune on launch.
