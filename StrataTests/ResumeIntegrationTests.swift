@@ -17,14 +17,12 @@ struct ResumeIntegrationTests {
 
     private func randomFile(bytes: Int) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("strata-live-\(UUID().uuidString)")
-        var data = Data(count: bytes)
-        data.withUnsafeMutableBytes { buffer in
-            for i in stride(from: 0, to: bytes, by: 8) {
-                var value = UInt64.random(in: .min ... .max)
-                withUnsafeBytes(of: &value) { raw in
-                    for j in 0..<min(8, bytes - i) { buffer[i + j] = raw[j] }
-                }
-            }
+        // Random, so a part landing in the wrong place can't go unnoticed.
+        var generator = SystemRandomNumberGenerator()
+        var data = Data(capacity: bytes)
+        while data.count < bytes {
+            var word = generator.next()
+            data.append(contentsOf: withUnsafeBytes(of: &word) { Array($0) }.prefix(bytes - data.count))
         }
         try data.write(to: url)
         return url
