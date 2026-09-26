@@ -109,7 +109,8 @@ struct S3RESTClient: Sendable {
         bucket: String,
         prefix: String,
         delimiter: String? = "/",
-        maxKeys: Int = 1000
+        maxKeys: Int = 1000,
+        onPage: (@Sendable ([StorageObject]) async -> Void)? = nil
     ) async throws -> [StorageObject] {
         var all: [StorageObject] = []
         var token: String?
@@ -122,6 +123,7 @@ struct S3RESTClient: Sendable {
                 maxKeys: maxKeys
             )
             all.append(contentsOf: page.objects)
+            await onPage?(page.objects)
             token = page.isTruncated ? page.continuationToken : nil
             // Defensive: a truncated page with no token would otherwise spin forever.
             if page.isTruncated && page.continuationToken == nil { break }

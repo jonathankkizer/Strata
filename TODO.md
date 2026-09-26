@@ -149,7 +149,10 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   (~lines 519-538), sending the user to IAM. Give it its own error and message.
   Check Azure's equivalent (`AuthenticationFailed` with a time detail).
 
-- [ ] **R7. Large listings are all-or-nothing.** Nothing shows until every page
+- [ ] **R7. Large listings are all-or-nothing.** *Mostly done in PR #37:* the
+  List view streams pages (merged, not re-sorted) and cancels superseded loads.
+  Still open: Columns still load each column whole; no count while loading; the
+  Azure 1,000-page cap is still silent. Nothing shows until every page
   has loaded; the full array is then sorted on the main actor; superseded loads
   keep running (ignored by the token, never cancelled); Azure silently stops at
   1,000 pages (`AzureBlobRESTClient` ~lines 109, 139). *Fix:* keep and cancel the
@@ -158,12 +161,12 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
 
 ## Tier 3 — everyday feel
 
-- [ ] **U1. ⌘R in List wipes the view.** `ObjectListViewController.reload()`
+- [x] **U1. ⌘R in List wipes the view.** (PR #37) `ObjectListViewController.reload()`
   (~line 299) empties `items` before loading, losing selection, scroll position
   and inspector. Keep rows while loading; restore selected keys and top visible
   row afterwards.
 
-- [ ] **U2. Sort change / ⌘R in Columns collapses the open path.**
+- [x] **U2. Sort change / ⌘R in Columns collapses the open path.** (PR #37)
   `ColumnBrowserViewController.applySort` (~line 1133) and the reload path
   (~line 1076) re-select via `selectRow`, which fires `handleSelection` (~line 963):
   columns to the right are removed and re-fetched and history is pushed. If the
@@ -173,10 +176,17 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   gone.
 
 - [ ] **U3. Right-clicking a folder in Columns navigates into it.**
-  `menuNeedsUpdate` (~line 438) selects the clicked row. Act on `clickedRow`
-  (`clickedItem()` exists) without changing selection.
+  `menuNeedsUpdate` (~line 438) selects the clicked row, and in Columns selecting a
+  folder opens it. The Finder's model is that a right-click doesn't change the
+  selection and the menu acts on the clicked row. Doing that means the
+  responder-chain commands (Download, Quick Look, Delete, Get Info) have to
+  target the clicked row while a context menu's action runs, and nothing else.
+  *Needs a real Mac:* it depends on when AppKit resets `clickedRow` relative to
+  `menuDidClose` and the action, and getting it wrong points Delete at the wrong
+  object. Tried and reverted in PR #37 for that reason. Suppressing the selection
+  callback instead leaves one folder highlighted beside another's contents.
 
-- [ ] **U4. Descending sort breaks the comparator contract.**
+- [x] **U4. Descending sort breaks the comparator contract.** (PR #37)
   `BrowseSort.areInOrder` (~line 45) returns `!ordered` for descending, which is
   true for equal elements. Swap operands instead, and tie-break on name so equal
   sizes/dates have a stable order.

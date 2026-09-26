@@ -360,6 +360,10 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         emptyLabel.isHidden = true
     }
 
+    func deselectAll() {
+        tableView.deselectAll(nil)
+    }
+
     func selectRow(for key: String) {
         guard let idx = items.firstIndex(where: { $0.key == key }) else { return }
         tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
@@ -576,6 +580,12 @@ final class ColumnBrowserViewController: NSViewController {
     // While auto-expanding to a deep prefix, `expand(column:segments:)` drives
     // column creation itself, so the selection callback must not also open columns.
     private var isAutoExpanding = false
+
+    /// True while a reload or re-sort puts the same object back under the selection.
+    /// Its row index usually moves, which the table reports as a selection change;
+    /// treated as a real one, that closed every column to the right, re-fetched the
+    /// next one and pushed a Back entry — collapsing the path on ⌘R or a sort change.
+    private var isReselecting = false
 
     /// True only while a location change comes from moving focus between columns that
     /// are already open, rather than from navigating somewhere new. The coordinator
@@ -964,7 +974,7 @@ final class ColumnBrowserViewController: NSViewController {
     private func handleSelection(_ object: StorageObject?, inColumn col: BrowseColumn) {
         // Programmatic selection during auto-expand is driven by expand(); ignore it
         // here so we don't open a duplicate column.
-        guard !isAutoExpanding else { return }
+        guard !isAutoExpanding, !isReselecting else { return }
         guard let colIndex = columns.firstIndex(where: { $0 === col }) else { return }
 
         // Always cull everything to the right of the selected column.
@@ -1074,11 +1084,24 @@ final class ColumnBrowserViewController: NSViewController {
 
             switch result {
             case .success(let objects):
+                self.isReselecting = true
                 col.items = objects.sorted(by: self.sort.areInOrder)
                 col.reloadTable()
                 col.hideOverlays()
                 if objects.isEmpty { col.showEmptyLabel("Empty") }
-                if let key = selectedKey { col.selectRow(for: key) }
+                let stillThere = selectedKey.map { key in col.items.contains { $0.key == key } } ?? false
+                if let key = selectedKey, stillThere {
+                    col.selectRow(for: key)
+                } else {
+                    col.deselectAll()
+                }
+                self.isReselecting = false
+                // The selected folder is gone: close what it had open, as if the user
+                // had clicked empty space, rather than leave a different row
+                // highlighted beside the old folder's contents.
+                if selectedKey != nil, !stillThere {
+                    self.handleSelection(nil, inColumn: col)
+                }
 
             case .failure(let error):
                 col.items = []
@@ -1133,6 +1156,8 @@ final class ColumnBrowserViewController: NSViewController {
     /// Re-sorts every open column and reloads, preserving each column's selection.
     func applySort(_ newSort: BrowseSort) {
         sort = newSort
+        isReselecting = true
+        defer { isReselecting = false }
         for col in columns {
             let selectedKey = col.selectedObject?.key
             col.items = col.items.sorted(by: sort.areInOrder)

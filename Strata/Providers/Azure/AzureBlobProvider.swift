@@ -40,6 +40,14 @@ final class AzureBlobProvider: StorageProvider {
         try await client.listAllBlobs(inContainer: container.name, prefix: prefix, delimiter: "/")
     }
 
+    func listObjects(
+        in container: StorageContainer,
+        prefix: String,
+        onPage: @escaping @Sendable ([StorageObject]) async -> Void
+    ) async throws {
+        _ = try await client.listAllBlobs(inContainer: container.name, prefix: prefix, delimiter: "/", onPage: onPage)
+    }
+
     func fetchMetadata(for object: StorageObject, in container: StorageContainer) async throws -> ObjectMetadata {
         try await client.fetchProperties(container: container.name, blobKey: object.key)
     }
