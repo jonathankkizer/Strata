@@ -34,6 +34,8 @@ final class InspectorViewController: NSViewController {
 
     private let stack = NSStackView()
     private let scrollView = NSScrollView()
+    /// The hairline between the browse pane and the inspector. Internal for tests.
+    private(set) var separator: NSBox?
     private var loadToken = 0
     /// Which cloud the shown objects live on. Event prediction is stated in the
     /// provider's own vocabulary, so with no provider connected there is nothing
@@ -83,8 +85,35 @@ final class InspectorViewController: NSViewController {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .controlBackgroundColor
         scrollView.automaticallyAdjustsContentInsets = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        view = scrollView
+        // A hairline down the inspector's leading edge, like the Finder's between its
+        // columns and the preview. The split view's own divider is there to drag but
+        // draws nothing on macOS 26, and with both panes painting the same background
+        // the inspector otherwise ran straight on from the list with no edge at all.
+        // It starts below the toolbar, as the Finder's does: the titlebar stays one
+        // uninterrupted surface.
+        let edge = NSBox()
+        edge.boxType = .separator
+        edge.translatesAutoresizingMaskIntoConstraints = false
+        separator = edge
+
+        let container = NSView()
+        container.addSubview(scrollView)
+        container.addSubview(edge)
+        view = container
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            edge.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            edge.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            edge.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            edge.widthAnchor.constraint(equalToConstant: 1),
+        ])
 
         NSLayoutConstraint.activate([
             document.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),

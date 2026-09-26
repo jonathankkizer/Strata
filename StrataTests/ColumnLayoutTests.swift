@@ -261,7 +261,7 @@ struct ScrollerVisibilityTests {
         let inspector = InspectorViewController()
         inspector.loadViewIfNeeded()
 
-        let scrollView = try #require(inspector.view as? NSScrollView)
+        let scrollView = try #require(inspector.view.subviews.compactMap { $0 as? NSScrollView }.first)
         #expect(scrollView.autohidesScrollers)
     }
 }

@@ -13,12 +13,23 @@ import AppKit
 @MainActor
 struct TitlebarBackdropTests {
 
+    /// The split view's divider draws nothing on macOS 26, so the inspector draws its
+    /// own edge: a separator on its leading side, starting below the toolbar.
+    @Test("The inspector has a visible edge against the browse pane")
+    func inspectorHasSeparator() throws {
+        let inspector = InspectorViewController()
+        inspector.loadViewIfNeeded()
+        let separator = try #require(inspector.separator)
+        #expect(separator.boxType == .separator)
+        #expect(separator.superview === inspector.view)
+    }
+
     @Test("The inspector paints the same backdrop as the browse panes")
     func inspectorMatchesContentBackdrop() throws {
         let inspector = InspectorViewController()
         inspector.loadViewIfNeeded()
 
-        let scrollView = try #require(inspector.view as? NSScrollView)
+        let scrollView = try #require(inspector.view.subviews.compactMap { $0 as? NSScrollView }.first)
         // Painting nothing is what caused the seam: the toolbar picked up the window
         // backdrop over the inspector and the control background over the content.
         #expect(scrollView.drawsBackground)
