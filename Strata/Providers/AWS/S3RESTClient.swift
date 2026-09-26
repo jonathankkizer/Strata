@@ -41,6 +41,7 @@ struct S3RESTClient: Sendable {
     let credentialSource: any AWSCredentialSource
     let session: URLSession
     let downloader: DownloadSession
+    let retryPolicy: RetryPolicy
 
     private var signer: SigV4Signer { SigV4Signer(region: endpoint.region, service: "s3") }
 
@@ -48,12 +49,14 @@ struct S3RESTClient: Sendable {
         endpoint: S3Endpoint,
         credentialSource: any AWSCredentialSource,
         session: URLSession = .shared,
-        downloader: DownloadSession = .shared
+        downloader: DownloadSession = .shared,
+        retryPolicy: RetryPolicy = .standard
     ) {
         self.endpoint = endpoint
         self.credentialSource = credentialSource
         self.session = session
         self.downloader = downloader
+        self.retryPolicy = retryPolicy
     }
 
     // MARK: - Reads
@@ -144,7 +147,9 @@ struct S3RESTClient: Sendable {
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
         try await retryingOnceIfRejected {
-            try await downloadObjectOnce(bucket: bucket, key: key, to: destinationURL, onProgress: onProgress)
+            try await retryPolicy.run {
+                try await downloadObjectOnce(bucket: bucket, key: key, to: destinationURL, onProgress: onProgress)
+            }
         }
     }
 
@@ -166,7 +171,7 @@ struct S3RESTClient: Sendable {
         guard (200..<300).contains(http.statusCode) else {
             // A failed GET still writes S3's error XML to the temp file.
             let body = (try? String(contentsOf: temporaryURL, encoding: .utf8)) ?? ""
-            throw Self.error(
+            throw Self.failure(
                 status: http.statusCode,
                 body: body,
                 bucket: bucket,
@@ -495,11 +500,18 @@ struct S3RESTClient: Sendable {
         extraHeaders: [String: String] = [:],
         delegate: (any URLSessionTaskDelegate)? = nil
     ) async throws -> (data: Data, response: HTTPURLResponse) {
-        try await retryingOnceIfRejected {
-            try await performOnce(
-                method: method, url: url, payload: payload, bucket: bucket,
-                body: body, extraHeaders: extraHeaders, delegate: delegate
-            )
+        // Starting a multipart upload is the one request that isn't idempotent: a
+        // retry after a lost response would create a second upload and orphan the
+        // first. Everything else — including each part — is safe to send again.
+        let createsUpload = method == "POST" && url.query(percentEncoded: true)?.hasPrefix("uploads") == true
+        let policy = createsUpload ? RetryPolicy(maxAttempts: 1) : retryPolicy
+        return try await retryingOnceIfRejected {
+            try await policy.run {
+                try await performOnce(
+                    method: method, url: url, payload: payload, bucket: bucket,
+                    body: body, extraHeaders: extraHeaders, delegate: delegate
+                )
+            }
         }
     }
 
@@ -541,7 +553,7 @@ struct S3RESTClient: Sendable {
             throw S3Error.notHTTPResponse
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw Self.error(
+            throw Self.failure(
                 status: http.statusCode,
                 body: String(data: data, encoding: .utf8) ?? "",
                 bucket: bucket,
@@ -550,6 +562,24 @@ struct S3RESTClient: Sendable {
             )
         }
         return (data, http)
+    }
+
+    /// `error(...)`, marked transient when trying again could work: S3's own
+    /// throttling and internal errors, and a body that arrived too slowly.
+    static func failure(
+        status: Int,
+        body: String,
+        bucket: String?,
+        response: HTTPURLResponse,
+        signedRegion: String
+    ) -> any Error {
+        let mapped = error(status: status, body: body, bucket: bucket, response: response, signedRegion: signedRegion)
+        let code = S3ErrorXMLParser.code(in: body)
+        let transientCodes: Set<String> = ["SlowDown", "InternalError", "ServiceUnavailable", "RequestTimeout"]
+        guard RetryPolicy.isTransient(status: status) || code.map(transientCodes.contains) == true else {
+            return mapped
+        }
+        return TransientFailure(underlying: mapped, retryAfter: RetryPolicy.retryAfter(from: response))
     }
 
     /// Maps S3's status codes and error codes onto errors the UI can say something

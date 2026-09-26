@@ -89,6 +89,7 @@ struct AzureBlobRESTClient: Sendable {
     /// Downloads need a session we own to get byte progress, so they don't go through
     /// `session` — see `DownloadSession`.
     let downloader: DownloadSession
+    let retryPolicy: RetryPolicy
 
     /// Backstop against a server that never stops returning a NextMarker.
     private static let maxPages = 1000
@@ -98,13 +99,15 @@ struct AzureBlobRESTClient: Sendable {
         tokenSource: any AzureTokenSource,
         apiVersion: String = "2021-12-02",
         session: URLSession = .shared,
-        downloader: DownloadSession = .shared
+        downloader: DownloadSession = .shared,
+        retryPolicy: RetryPolicy = .standard
     ) {
         self.endpoint = endpoint
         self.tokenSource = tokenSource
         self.apiVersion = apiVersion
         self.session = session
         self.downloader = downloader
+        self.retryPolicy = retryPolicy
     }
 
     // MARK: - List Containers
@@ -175,7 +178,9 @@ struct AzureBlobRESTClient: Sendable {
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
         try await retryingOnceIfRejected {
-            try await downloadBlobOnce(container: container, key: key, to: destinationURL, onProgress: onProgress)
+            try await retryPolicy.run {
+                try await downloadBlobOnce(container: container, key: key, to: destinationURL, onProgress: onProgress)
+            }
         }
     }
 
@@ -202,7 +207,7 @@ struct AzureBlobRESTClient: Sendable {
         guard (200..<300).contains(http.statusCode) else {
             // A failed GET still writes a body — Azure's error XML — to the temp file.
             let body = (try? String(contentsOf: temporaryURL, encoding: .utf8)) ?? ""
-            throw Self.error(status: http.statusCode, body: body, account: endpoint.account)
+            throw Self.failure(status: http.statusCode, body: body, response: http, account: endpoint.account)
         }
 
         // Move into place. `replaceItemAt` is atomic and handles the
@@ -342,8 +347,12 @@ struct AzureBlobRESTClient: Sendable {
     /// callers can read headers.
     @discardableResult
     private func perform(method: String, url: URL, body: RequestBody?, extraHeaders: [String: String], delegate: (any URLSessionTaskDelegate)? = nil) async throws -> (data: Data, response: HTTPURLResponse) {
+        // Every Blob operation Strata sends is idempotent (Put Block and Put Block
+        // List included), so each can simply be sent again.
         try await retryingOnceIfRejected {
-            try await performOnce(method: method, url: url, body: body, extraHeaders: extraHeaders, delegate: delegate)
+            try await retryPolicy.run {
+                try await performOnce(method: method, url: url, body: body, extraHeaders: extraHeaders, delegate: delegate)
+            }
         }
     }
 
@@ -384,9 +393,17 @@ struct AzureBlobRESTClient: Sendable {
             throw AzureBlobError.notHTTPResponse
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw Self.error(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "", account: endpoint.account)
+            throw Self.failure(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "", response: http, account: endpoint.account)
         }
         return (data, http)
+    }
+
+    /// `error(...)`, marked transient when trying again could work — Azure's 503
+    /// `ServerBusy` and 500 `OperationTimedOut` among them.
+    static func failure(status: Int, body: String, response: HTTPURLResponse, account: String) -> any Error {
+        let mapped = error(status: status, body: body, account: account)
+        guard RetryPolicy.isTransient(status: status) else { return mapped }
+        return TransientFailure(underlying: mapped, retryAfter: RetryPolicy.retryAfter(from: response))
     }
 
     /// Maps a failed response onto something the UI can explain. A 403 is not always
