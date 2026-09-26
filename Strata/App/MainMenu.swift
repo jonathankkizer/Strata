@@ -174,6 +174,14 @@ enum MainMenu {
             )
             welcome.keyEquivalentModifierMask = [.command, .shift]
             welcome.target = target
+            // Safari's shortcut for its Downloads list.
+            let transfers = menu.addItem(
+                withTitle: "Transfers",
+                action: #selector(AppDelegate.showTransfers(_:)),
+                keyEquivalent: "l"
+            )
+            transfers.keyEquivalentModifierMask = [.command, .option]
+            transfers.target = target
             menu.addItem(.separator())
             menu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
             NSApp.windowsMenu = menu

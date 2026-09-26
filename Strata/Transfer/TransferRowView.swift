@@ -127,6 +127,8 @@ final class TransferRowView: NSView {
             badgeBox.isHidden = true
         }
 
+        statusField.toolTip = nil
+        statusField.lineBreakMode = .byTruncatingTail
         switch item.state {
         case .queued:
             progressBar.isHidden = false
@@ -157,6 +159,8 @@ final class TransferRowView: NSView {
         case .failed(let reason):
             progressBar.isHidden = true
             statusField.stringValue = "Failed · \(reason)"
+            // The line is short and truncates; the whole reason is a hover away.
+            statusField.toolTip = reason
             statusField.textColor = .systemRed
             configureAction(symbol: "arrow.clockwise.circle", tint: .controlAccentColor, enabled: true, tooltip: "Retry")
         }

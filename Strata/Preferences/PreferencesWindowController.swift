@@ -268,7 +268,7 @@ private final class GeneralPreferencesViewController: PreferencePaneViewControll
     private let downloadLocationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
 
     override func boxes() -> [NSBox] {
-        [makeStartupBox(), makeUploadsBox(), makeDownloadsBox()]
+        [makeStartupBox(), makeUploadsBox(), makeDownloadsBox(), makeTransfersBox()]
     }
 
     // MARK: - Startup
@@ -347,6 +347,27 @@ private final class GeneralPreferencesViewController: PreferencePaneViewControll
                 + "and dragging a blob to the Finder downloads it wherever you drop it."
             ),
         ])
+    }
+
+    // MARK: - Transfers
+
+    private func makeTransfersBox() -> NSBox {
+        let checkbox = NSButton(
+            checkboxWithTitle: "Notify me when transfers finish",
+            target: self,
+            action: #selector(notifyWhenTransfersFinishChanged(_:))
+        )
+        checkbox.state = StrataDefaults.notifyWhenTransfersFinish ? .on : .off
+        return makeBox(titled: "Transfers", content: [
+            setting(checkbox, caption:
+                "Only while Strata is in the background. A batch of transfers gets one "
+                + "notification when the last of them is done."
+            ),
+        ])
+    }
+
+    @objc private func notifyWhenTransfersFinishChanged(_ sender: NSButton) {
+        StrataDefaults.notifyWhenTransfersFinish = sender.state == .on
     }
 
     /// Shows the folder with its real Finder icon, plus the "Other…" chooser.

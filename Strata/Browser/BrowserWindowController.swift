@@ -18,7 +18,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     private lazy var transfersPopover: NSPopover = {
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = TransfersPopoverViewController()
+        popover.contentViewController = TransfersViewController(mode: .popover)
         return popover
     }()
 
@@ -116,7 +116,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     /// Reveal the queue when the key window's browser enqueues uploads.
     @objc private func revealTransfers() {
-        guard window?.isKeyWindow == true, !transfersPopover.isShown else { return }
+        // The Transfers window already shows them; a popover on top would be noise.
+        guard window?.isKeyWindow == true, !transfersPopover.isShown,
+              TransfersWindowController.shared.window?.isVisible != true else { return }
         transfersPopover.show(relativeTo: transfersButton.bounds, of: transfersButton, preferredEdge: .maxY)
     }
 

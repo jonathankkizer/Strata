@@ -13,6 +13,15 @@ enum StrataDefaults {
         set { UserDefaults.standard.set(newValue, forKey: askBeforeUploadingKey) }
     }
 
+    private static let dontNotifyWhenTransfersFinishKey = "DontNotifyWhenTransfersFinish"
+
+    /// Whether a batch of transfers finishing while Strata is in the background posts
+    /// a notification. On by default, so it's stored inverted (`bool` defaults false).
+    static var notifyWhenTransfersFinish: Bool {
+        get { !UserDefaults.standard.bool(forKey: dontNotifyWhenTransfersFinishKey) }
+        set { UserDefaults.standard.set(!newValue, forKey: dontNotifyWhenTransfersFinishKey) }
+    }
+
     private static let azureCLIPathKey = "AzureCLIPath"
     private static let awsCLIPathKey = "AWSCLIPath"
 

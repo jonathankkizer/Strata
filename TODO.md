@@ -218,7 +218,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
 - [ ] **U8. Find / filter (⌘F).** `NSSearchToolbarItem` bound to ⌘F (Edit ▸
   Find) filtering the current listing, both views.
 
-- [ ] **U9. Transfers are only reachable from a toolbar popover.** Add Window ▸
+- [x] **U9. Transfers are only reachable from a toolbar popover.** (PR #40) Add Window ▸
   Transfers (⌥⌘L, Safari's), a Dock badge + Dock progress, a user notification
   when a transfer finishes while inactive (DESIGN.md promises it), and a tooltip or
   wrapping on the failure line in `TransferRowView` (~line 159).
