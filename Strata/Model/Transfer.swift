@@ -58,6 +58,11 @@ final class TransferItem {
     /// have actually landed.
     var onFinish: ((Error?) -> Void)?
 
+    /// What earlier attempts got onto the service (uploads) or down to disk
+    /// (downloads), so Retry carries on from there. Kept for the item's life.
+    let uploadResume = UploadResumeState()
+    let downloadResume = DownloadResumeState()
+
     var bytesTransferred: Int64 = 0
     var state: TransferState = .queued
     var task: Task<Void, Never>?

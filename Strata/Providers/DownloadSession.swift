@@ -31,6 +31,8 @@ final class DownloadSession: NSObject, @unchecked Sendable {
     private let lock = NSLock()
     private var progressHandlers: [Int: @Sendable (Int64, Int64) -> Void] = [:]
     private var continuations: [Int: CheckedContinuation<(URL, HTTPURLResponse), any Error>] = [:]
+    /// Where each task's resume data goes if it fails or is stopped.
+    private var resumeStates: [Int: DownloadResumeState] = [:]
 
     private lazy var session: URLSession = URLSession(
         configuration: .default,
@@ -43,21 +45,39 @@ final class DownloadSession: NSObject, @unchecked Sendable {
     /// caller can check the status code before trusting the bytes.
     ///
     /// Cancelling the surrounding `Task` cancels the transfer.
+    ///
+    /// With `resume`, a download that stopped part-way — a dropped connection, or the
+    /// user pressing Stop — leaves URLSession's resume data there, and the next call
+    /// with the same state carries on from the byte it reached instead of starting
+    /// over. The resume data is used once: if the resumed request is refused, the
+    /// caller asks again and gets a fresh download.
     func download(
         _ request: URLRequest,
+        resume: DownloadResumeState? = nil,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws -> (URL, HTTPURLResponse) {
-        let task = session.downloadTask(with: request)
+        let task: URLSessionDownloadTask
+        if let data = resume?.resumeData {
+            resume?.resumeData = nil
+            task = session.downloadTask(withResumeData: data)
+        } else {
+            task = session.downloadTask(with: request)
+        }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 lock.lock()
                 continuations[task.taskIdentifier] = continuation
                 if let onProgress { progressHandlers[task.taskIdentifier] = onProgress }
+                if let resume { resumeStates[task.taskIdentifier] = resume }
                 lock.unlock()
                 task.resume()
             }
         } onCancel: {
-            task.cancel()
+            if let resume {
+                task.cancel { data in if let data { resume.resumeData = data } }
+            } else {
+                task.cancel()
+            }
         }
     }
 
@@ -68,6 +88,7 @@ final class DownloadSession: NSObject, @unchecked Sendable {
         lock.lock()
         let continuation = continuations.removeValue(forKey: taskIdentifier)
         progressHandlers.removeValue(forKey: taskIdentifier)
+        resumeStates.removeValue(forKey: taskIdentifier)
         lock.unlock()
         continuation?.resume(with: result)
     }
@@ -114,6 +135,13 @@ extension DownloadSession: URLSessionDownloadDelegate {
         guard let error else {
             // Success already resumed the continuation above; this is a no-op.
             return
+        }
+        // A failure part-way through carries the data needed to pick up from there.
+        if let data = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
+            lock.lock()
+            let state = resumeStates[task.taskIdentifier]
+            lock.unlock()
+            state?.resumeData = data
         }
         finish(task.taskIdentifier, with: .failure(error))
     }

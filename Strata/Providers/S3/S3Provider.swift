@@ -100,11 +100,32 @@ final class S3Provider: StorageProvider {
         to destinationURL: URL,
         onProgress: (@Sendable (Int64, Int64) -> Void)?
     ) async throws {
+        try await download(fromKey: key, in: container, to: destinationURL, resumeState: nil, onProgress: onProgress)
+    }
+
+    func download(
+        fromKey key: String,
+        in container: StorageContainer,
+        to destinationURL: URL,
+        resume: DownloadResumeState,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
+        try await download(fromKey: key, in: container, to: destinationURL, resumeState: resume, onProgress: onProgress)
+    }
+
+    private func download(
+        fromKey key: String,
+        in container: StorageContainer,
+        to destinationURL: URL,
+        resumeState: DownloadResumeState?,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
         try await withRegionalClient(for: container.name) { client in
             try await client.downloadObject(
                 bucket: container.name,
                 key: key,
                 to: destinationURL,
+                resume: resumeState,
                 onProgress: onProgress
             )
         }
@@ -149,6 +170,40 @@ final class S3Provider: StorageProvider {
         plan: UploadPlan,
         onProgress: (@Sendable (Int64, Int64) -> Void)?
     ) async throws {
+        try await upload(from: fileURL, toKey: key, in: container, contentType: contentType, plan: plan, resumeState: nil, onProgress: onProgress)
+    }
+
+    func upload(
+        from fileURL: URL,
+        toKey key: String,
+        in container: StorageContainer,
+        contentType: String?,
+        plan: UploadPlan,
+        resume: UploadResumeState,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
+        try await upload(from: fileURL, toKey: key, in: container, contentType: contentType, plan: plan, resumeState: resume, onProgress: onProgress)
+    }
+
+    /// Aborts the multipart upload a failed transfer was holding open for a retry, so
+    /// its parts stop costing money.
+    func abandonUpload(_ resume: UploadResumeState, key: String, in container: StorageContainer) async {
+        guard let uploadID = resume.uploadID else { return }
+        resume.reset()
+        try? await withRegionalClient(for: container.name) { client in
+            await client.abortDetached(bucket: container.name, key: key, uploadID: uploadID)
+        }
+    }
+
+    private func upload(
+        from fileURL: URL,
+        toKey key: String,
+        in container: StorageContainer,
+        contentType: String?,
+        plan: UploadPlan,
+        resumeState: UploadResumeState?,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
         try await withRegionalClient(for: container.name) { client in
             // The plan is the source of truth, so the object is written by the operation
             // whose event the UI already predicted. Choosing differently here would make
@@ -160,6 +215,7 @@ final class S3Provider: StorageProvider {
                     fileURL: fileURL,
                     contentType: contentType,
                     partSize: Int(plan.singleShotThreshold),
+                    resume: resumeState,
                     onProgress: onProgress
                 )
             } else {

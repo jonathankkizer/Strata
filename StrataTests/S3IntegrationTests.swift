@@ -534,6 +534,12 @@ final class ProgressRecorder: @unchecked Sendable {
         return values.last
     }
 
+    var first: Int64? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values.first
+    }
+
     /// Byte counts must never go backwards — a multipart upload that reset its offset
     /// per part would show the progress bar jumping back at every boundary.
     var isMonotonic: Bool {

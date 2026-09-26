@@ -91,16 +91,53 @@ final class TransferQueue {
 
     func retry(_ item: TransferItem) {
         guard item.isRetryable else { return }
-        item.bytesTransferred = 0
         item.state = .queued
         postChange()
         startEligible()
     }
 
     func clearFinished() {
+        let cleared = transfers.filter { !$0.isActive }
         transfers.removeAll { !$0.isActive }
         postChange()
+        // A cleared failure won't be retried, so let go of anything it held open.
+        abandon(cleared)
     }
+
+    /// Releases whatever failed uploads were holding open for a retry — S3 multipart
+    /// uploads keep costing money until aborted. Awaitable so quitting can wait
+    /// (briefly) for it.
+    func abandon(_ items: [TransferItem]) {
+        for item in items where item.direction == .upload && item.state != .completed {
+            let (resume, key, container, provider) = (item.uploadResume, item.key, item.container, item.provider)
+            pendingAbandons.append(Task { await provider.abandonUpload(resume, key: key, in: container) })
+        }
+    }
+
+    /// Whether quitting has anything to tidy up on the service.
+    var hasUnfinishedUploads: Bool {
+        transfers.contains { $0.direction == .upload && $0.state != .completed }
+    }
+
+    /// For quitting: stops what's running (whose own cancellation aborts its
+    /// multipart upload), abandons failed uploads nobody can retry now, and waits up
+    /// to `timeout` for those requests to go out. A process that just exits leaves
+    /// S3 multipart uploads open, billing for their parts.
+    func shutDown(timeout: Duration) async {
+        let running = transfers.filter(\.isActive)
+        running.forEach(cancel)
+        abandon(transfers.filter { !$0.isActive })
+        let waits = pendingAbandons + running.compactMap(\.task)
+        pendingAbandons = []
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { for task in waits { await task.value } }
+            group.addTask { try? await Task.sleep(for: timeout) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    private var pendingAbandons: [Task<Void, Never>] = []
 
     // MARK: - Aggregate state (for the toolbar ring)
 
@@ -127,7 +164,8 @@ final class TransferQueue {
 
     private func start(_ item: TransferItem) {
         item.state = .running
-        item.bytesTransferred = 0
+        // Not reset to zero: a retry that resumes part-way starts its bar where the
+        // last attempt got to, and the first progress callback sets it exactly.
         postChange()
 
         let id = item.id
@@ -152,6 +190,7 @@ final class TransferQueue {
                         in: item.container,
                         contentType: item.contentType,
                         plan: plan,
+                        resume: item.uploadResume,
                         onProgress: progress
                     )
                 case .download:
@@ -159,6 +198,7 @@ final class TransferQueue {
                         fromKey: item.key,
                         in: item.container,
                         to: item.localURL,
+                        resume: item.downloadResume,
                         onProgress: progress
                     )
                 }
