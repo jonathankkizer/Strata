@@ -50,7 +50,30 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     private let emptyStateSubtitleLabel = NSTextField(labelWithString: "")
     private let emptyStateButton = NSButton(title: "", target: nil, action: nil)
 
+    /// Everything listed for this location, in order.
+    private var loaded: [StorageObject] = []
+    /// What the table shows: `loaded`, narrowed by the Find field's text.
     private var items: [StorageObject] = []
+
+    /// The Find field's text. Matches names in the folder on screen, ignoring case and
+    /// accents, the way the Finder's "Name contains" does.
+    var filterText = "" {
+        didSet {
+            guard filterText != oldValue else { return }
+            let selected = Set(selectedObjects().map(\.key))
+            refreshVisibleItems()
+            tableView.reloadData()
+            selectRows(withKeys: selected)
+            // With nothing loaded yet, the loading or empty state already on screen is
+            // right; a filter only changes the picture once there are rows.
+            if !loaded.isEmpty { showFilteredOrEmptyState() }
+        }
+    }
+
+    private func refreshVisibleItems() {
+        let text = filterText.trimmingCharacters(in: .whitespaces)
+        items = text.isEmpty ? loaded : loaded.filter { displayName(for: $0).localizedStandardContains(text) }
+    }
     private var loadToken = 0
     private var loadTask: Task<Void, Never>?
     /// The location whose rows are on screen. Reloading that same location is a
@@ -327,13 +350,14 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         let container = StorageContainer(name: location.container)
         let prefix = location.prefix
 
-        if location == shownLocation, !items.isEmpty {
+        if location == shownLocation, !loaded.isEmpty {
             let snapshot = ViewSnapshot(of: self)
             loadTask = Task { @MainActor in
                 do {
                     let objects = try await provider.listObjects(in: container, prefix: prefix)
                     guard token == self.loadToken else { return }
-                    self.items = objects.sorted(by: self.currentSort.areInOrder)
+                    self.loaded = objects.sorted(by: self.currentSort.areInOrder)
+                    self.refreshVisibleItems()
                     self.tableView.reloadData()
                     snapshot.restore(in: self)
                     self.finishLoading()
@@ -347,6 +371,7 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
         shownLocation = location
         hideEmptyState()
+        loaded = []
         items = []
         tableView.reloadData()
         spinner.startAnimation(nil)
@@ -373,23 +398,36 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
         guard !page.isEmpty else { return }
         spinner.stopAnimation(nil)
         let selected = Set(selectedObjects().map(\.key))
-        items = currentSort.merging(page, into: items)
+        loaded = currentSort.merging(page, into: loaded)
+        refreshVisibleItems()
         tableView.reloadData()
         selectRows(withKeys: selected)
     }
 
     private func finishLoading() {
         spinner.stopAnimation(nil)
-        if items.isEmpty {
-            showEmptyState(symbol: "tray", title: "This Folder Is Empty", subtitle: nil, actionTitle: nil, action: nil)
-        } else {
-            hideEmptyState()
-        }
+        showFilteredOrEmptyState()
         if let key = pendingSelectKey, let index = items.firstIndex(where: { $0.key == key }) {
             tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
             tableView.scrollRowToVisible(index)
         }
         pendingSelectKey = nil
+    }
+
+    private func showFilteredOrEmptyState() {
+        if loaded.isEmpty {
+            showEmptyState(symbol: "tray", title: "This Folder Is Empty", subtitle: nil, actionTitle: nil, action: nil)
+        } else if items.isEmpty {
+            showEmptyState(
+                symbol: "magnifyingglass",
+                title: "No Matches",
+                subtitle: "Nothing in this folder has \u{201C}\(filterText)\u{201D} in its name.",
+                actionTitle: nil,
+                action: nil
+            )
+        } else {
+            hideEmptyState()
+        }
     }
 
     private func selectRows(withKeys keys: Set<String>) {
@@ -519,7 +557,8 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
 
     private func sortItems() {
         let sort = currentSort
-        items.sort { sort.areInOrder($0, $1) }
+        loaded.sort { sort.areInOrder($0, $1) }
+        refreshVisibleItems()
     }
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {

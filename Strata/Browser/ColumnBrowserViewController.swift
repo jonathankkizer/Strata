@@ -115,8 +115,35 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     private let divider = ColumnDividerView()
     private var widthConstraint: NSLayoutConstraint!
 
-    var items: [StorageObject] = []
+    /// The rows shown: everything listed (`allItems`), narrowed by `filterText`.
+    private(set) var items: [StorageObject] = []
+    /// Everything listed for this column's folder.
+    private(set) var allItems: [StorageObject] = []
     var loadToken = 0
+
+    /// Only the column showing the current folder is ever filtered; the rest keep "".
+    var filterText = "" {
+        didSet {
+            guard filterText != oldValue else { return }
+            refreshVisibleItems()
+            reloadTable()
+            if items.isEmpty, !allItems.isEmpty {
+                showEmptyLabel("No Matches")
+            } else if !items.isEmpty {
+                emptyLabel.isHidden = true
+            }
+        }
+    }
+
+    func setItems(_ newItems: [StorageObject]) {
+        allItems = newItems
+        refreshVisibleItems()
+    }
+
+    private func refreshVisibleItems() {
+        let text = filterText.trimmingCharacters(in: .whitespaces)
+        items = text.isEmpty ? allItems : allItems.filter { displayName(for: $0).localizedStandardContains(text) }
+    }
 
     /// Called when the selection changes (folder or blob, or nil on deselect).
     var onSelectionChange: ((StorageObject?) -> Void)?
@@ -1044,7 +1071,7 @@ final class ColumnBrowserViewController: NSViewController {
 
             switch result {
             case .success(let objects):
-                col.items = objects.sorted(by: self.sort.areInOrder)
+                col.setItems(objects.sorted(by: self.sort.areInOrder))
                 col.reloadTable()
                 col.hideOverlays()
                 if objects.isEmpty { col.showEmptyLabel("Empty") }
@@ -1055,7 +1082,7 @@ final class ColumnBrowserViewController: NSViewController {
                 }
 
             case .failure(let error):
-                col.items = []
+                col.setItems([])
                 col.reloadTable()
                 self.showError(error, in: col)
             }
@@ -1086,7 +1113,7 @@ final class ColumnBrowserViewController: NSViewController {
             switch result {
             case .success(let objects):
                 self.isReselecting = true
-                col.items = objects.sorted(by: self.sort.areInOrder)
+                col.setItems(objects.sorted(by: self.sort.areInOrder))
                 col.reloadTable()
                 col.hideOverlays()
                 if objects.isEmpty { col.showEmptyLabel("Empty") }
@@ -1105,7 +1132,7 @@ final class ColumnBrowserViewController: NSViewController {
                 }
 
             case .failure(let error):
-                col.items = []
+                col.setItems([])
                 col.reloadTable()
                 self.showError(error, in: col)
             }
@@ -1152,6 +1179,23 @@ final class ColumnBrowserViewController: NSViewController {
         }
     }
 
+    // MARK: - Find
+
+    /// Filters the column showing the current folder, keeping its selection. Every
+    /// other column is left unfiltered.
+    func applyFilter(_ text: String) {
+        isReselecting = true
+        defer { isReselecting = false }
+        let target = columns.last { $0.location == location }
+        for col in columns {
+            let wanted = col === target ? text : ""
+            guard col.filterText != wanted else { continue }
+            let selectedKey = col.selectedObject?.key
+            col.filterText = wanted
+            if let selectedKey { col.selectRow(for: selectedKey) }
+        }
+    }
+
     // MARK: - Sorting (folders always before blobs)
 
     /// Re-sorts every open column and reloads, preserving each column's selection.
@@ -1161,7 +1205,7 @@ final class ColumnBrowserViewController: NSViewController {
         defer { isReselecting = false }
         for col in columns {
             let selectedKey = col.selectedObject?.key
-            col.items = col.items.sorted(by: sort.areInOrder)
+            col.setItems(col.allItems.sorted(by: sort.areInOrder))
             col.reloadTable()
             if let selectedKey { col.selectRow(for: selectedKey) }
         }

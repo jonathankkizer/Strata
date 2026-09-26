@@ -64,6 +64,42 @@ struct ListLoadingTests {
         #expect(list.selectedObjects().map(\.key) == ["b"])
     }
 
+    /// TODO.md U8.
+    @Test("Find narrows the folder to matching names, ignoring case and accents")
+    func findFilters() async {
+        let provider = GatedProvider()
+        let list = makeList(provider)
+        list.location = BrowserLocation(container: "c", prefix: "logs/")
+        await provider.release(page: [blob("logs/Report.csv"), blob("logs/résumé.pdf"), blob("logs/other.txt")])
+        await provider.finish()
+        await settle { list.displayedObjects.count == 3 }
+
+        list.filterText = "report"
+        #expect(list.displayedObjects.map(\.key) == ["logs/Report.csv"])
+        list.filterText = "resume"
+        #expect(list.displayedObjects.map(\.key) == ["logs/résumé.pdf"])
+        // The folder's own prefix isn't part of the name.
+        list.filterText = "logs"
+        #expect(list.displayedObjects.isEmpty)
+        list.filterText = ""
+        #expect(list.displayedObjects.count == 3)
+    }
+
+    @Test("Pages that arrive while filtering are filtered too")
+    func findWhileLoading() async {
+        let provider = GatedProvider()
+        let list = makeList(provider)
+        list.location = BrowserLocation(container: "c", prefix: "")
+        list.filterText = "keep"
+        await provider.release(page: [blob("keep-1"), blob("drop-1")])
+        await provider.release(page: [blob("keep-2")])
+        await provider.finish()
+        await settle { list.displayedObjects.count == 2 }
+        #expect(list.displayedObjects.map(\.key) == ["keep-1", "keep-2"])
+        list.filterText = ""
+        #expect(list.displayedObjects.count == 3)
+    }
+
     @Test("Navigating away cancels the listing still in flight")
     func cancelsSuperseded() async {
         let provider = GatedProvider()

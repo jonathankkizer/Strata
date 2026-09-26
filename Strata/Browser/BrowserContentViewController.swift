@@ -246,9 +246,29 @@ final class BrowserContentViewController: NSViewController {
     /// Fans one surface's location change out to the shared chrome: the path bar
     /// here, and the window title via the coordinator.
     private func handleLocationChange(_ location: BrowserLocation?) {
+        // A Find filters the folder it was typed in. Going somewhere else ends it, as
+        // it would be odd for "report" to follow you into every folder you open.
+        if !filterText.isEmpty {
+            filterText = ""
+            onFilterCleared?()
+        }
         updatePathBar(for: location)
         onLocationChange?(location)
     }
+
+    // MARK: - Find
+
+    /// The toolbar search field's text, applied to whichever view is showing.
+    var filterText = "" {
+        didSet {
+            guard filterText != oldValue else { return }
+            list.filterText = mode == .list ? filterText : ""
+            columns.applyFilter(mode == .columns ? filterText : "")
+        }
+    }
+
+    /// Called when navigation clears the filter, so the search field can empty too.
+    var onFilterCleared: (() -> Void)?
 
     private func updatePathBar(for location: BrowserLocation?) {
         guard let location else {

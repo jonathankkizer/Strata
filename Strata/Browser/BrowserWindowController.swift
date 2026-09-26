@@ -29,7 +29,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         static let viewMode = NSToolbarItem.Identifier("viewMode")
         static let inspector = NSToolbarItem.Identifier("inspector")
         static let transfers = NSToolbarItem.Identifier("transfers")
+        static let search = NSToolbarItem.Identifier("search")
     }
+
+    private lazy var searchItem: NSSearchToolbarItem = {
+        let item = NSSearchToolbarItem(itemIdentifier: ToolbarID.search)
+        item.label = "Find"
+        item.toolTip = "Show only items whose names contain this text"
+        item.searchField.placeholderString = "Find in Folder"
+        item.searchField.sendsSearchStringImmediately = true
+        item.searchField.target = self
+        item.searchField.action = #selector(searchChanged(_:))
+        return item
+    }()
 
     private static let frameAutosaveName = "StrataBrowserWindow"
 
@@ -62,6 +74,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.contentViewController = splitViewController
         configureToolbar(for: window)
         observeTransferQueue()
+        splitViewController.content.onFilterCleared = { [weak self] in
+            self?.searchItem.searchField.stringValue = ""
+        }
 
         // Every window adopts the remembered size; only the primary keeps writing
         // it back. Additional windows then cascade down-right like Finder's.
@@ -132,14 +147,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         window.toolbarStyle = .unified
     }
 
+    // MARK: - Find
+
+    @objc private func searchChanged(_ sender: NSSearchField) {
+        splitViewController.content.filterText = sender.stringValue
+    }
+
+    /// Edit ▸ Find ▸ Find… (⌘F). A toolbar customised before Find existed won't have
+    /// the field, so it's put back rather than ⌘F doing nothing.
+    @objc func focusSearch(_ sender: Any?) {
+        guard let toolbar = window?.toolbar else { return }
+        if !toolbar.items.contains(where: { $0.itemIdentifier == ToolbarID.search }) {
+            let before = toolbar.items.firstIndex { $0.itemIdentifier == ToolbarID.inspector } ?? toolbar.items.count
+            toolbar.insertItem(withItemIdentifier: ToolbarID.search, at: before)
+        }
+        toolbar.isVisible = true
+        searchItem.beginSearchInteraction()
+    }
+
     // MARK: - NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.viewMode, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, .flexibleSpace, ToolbarID.transfers, ToolbarID.inspector]
+        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.viewMode, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, .flexibleSpace, ToolbarID.transfers, ToolbarID.search, ToolbarID.inspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.viewMode, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, ToolbarID.transfers, ToolbarID.inspector, .flexibleSpace, .space]
+        [.toggleSidebar, .sidebarTrackingSeparator, ToolbarID.viewMode, ToolbarID.connect, ToolbarID.upload, ToolbarID.refresh, ToolbarID.transfers, ToolbarID.search, ToolbarID.inspector, .flexibleSpace, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -184,6 +217,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             item.toolTip = "Switch between List and Columns"
             item.view = splitViewController.browseModeControl
             return item
+        case ToolbarID.search:
+            return searchItem
         case ToolbarID.transfers:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.label = "Transfers"
