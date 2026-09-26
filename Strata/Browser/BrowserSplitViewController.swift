@@ -101,8 +101,8 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
             self?.startUpload(sources: urls, to: favorite.location)
         }
 
-        content.onDropFiles = { [weak self] urls in
-            guard let self, self.provider != nil, let location = self.content.location else { return }
+        content.onDropFiles = { [weak self] urls, location in
+            guard let self, self.provider != nil else { return }
             self.startUpload(sources: urls, to: location)
         }
 

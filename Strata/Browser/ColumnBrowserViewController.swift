@@ -145,8 +145,8 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         items = text.isEmpty ? allItems : allItems.filter { displayName(for: $0).localizedStandardContains(text) }
     }
 
-    /// Called when the selection changes (folder or blob, or nil on deselect).
-    var onSelectionChange: ((StorageObject?) -> Void)?
+    /// Called when the selection changes, with everything selected (empty on deselect).
+    var onSelectionChange: (([StorageObject]) -> Void)?
     /// → — enter the selected folder's child column.
     var onEnter: (() -> Void)?
     /// ⌘↓ — open the selection: enter a folder, or download a blob.
@@ -215,10 +215,20 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         tableView.keyDown(with: event)
     }
 
+    /// The one selected object, when exactly one is selected.
     var selectedObject: StorageObject? {
-        let row = tableView.selectedRow
-        guard row >= 0, row < items.count else { return nil }
+        let rows = tableView.selectedRowIndexes
+        guard rows.count == 1, let row = rows.first, row < items.count else { return nil }
         return items[row]
+    }
+
+    var selectedObjects: [StorageObject] {
+        tableView.selectedRowIndexes.compactMap { $0 < items.count ? items[$0] : nil }
+    }
+
+    func selectRows(forKeys keys: Set<String>) {
+        let indexes = IndexSet(items.indices.filter { keys.contains(items[$0].key) })
+        tableView.selectRowIndexes(indexes, byExtendingSelection: false)
     }
 
     init(location: BrowserLocation, width: CGFloat) {
@@ -247,7 +257,10 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         // background keeps every column uniform.
         tableView.style = .plain
         tableView.backgroundColor = .controlBackgroundColor
-        tableView.allowsMultipleSelection = false
+        // Shift- and ⌘-click select several, as in the Finder. Only a single folder
+        // opens the next column; several things selected just stay selected.
+        tableView.allowsMultipleSelection = true
+        tableView.registerForDraggedTypes([.fileURL])
         tableView.dataSource = self
         tableView.delegate = self
         tableView.focusRingType = .none
@@ -445,7 +458,31 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        onSelectionChange?(selectedObject)
+        onSelectionChange?(selectedObjects)
+    }
+
+    // MARK: Drops from the Finder
+
+    /// Called with the dropped files and where they should go.
+    var onDropFiles: (([URL], BrowserLocation) -> Void)?
+
+    func tableView(_ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        guard info.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) else { return [] }
+        // Onto a folder row: that folder. Anywhere else: this column's folder.
+        if !(dropOperation == .on && row >= 0 && row < items.count && items[row].isPrefix) {
+            tableView.setDropRow(-1, dropOperation: .on)
+        }
+        return .copy
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return false }
+        let destination = dropOperation == .on && row >= 0 && row < items.count && items[row].isPrefix
+            ? BrowserLocation(container: location.container, prefix: items[row].key)
+            : location
+        onDropFiles?(urls, destination)
+        return true
     }
 
     /// Type-to-select, matching the list surface and every native Mac list.
@@ -469,7 +506,8 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
     /// user actually clicked.
     func menuNeedsUpdate(_ menu: NSMenu) {
         let clicked = tableView.clickedRow
-        guard clicked >= 0, tableView.selectedRow != clicked else { return }
+        // Right-clicking inside a multiple selection acts on all of it, as in the Finder.
+        guard clicked >= 0, !tableView.selectedRowIndexes.contains(clicked) else { return }
         tableView.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
     }
 
@@ -580,9 +618,11 @@ final class ColumnBrowserViewController: NSViewController {
 
     var provider: (any StorageProvider)?
 
-    /// Columns are single-select, so this carries at most one object — the array
-    /// shape matches the list surface so the facade can treat them alike.
+    /// Everything selected in the column being worked in.
     var onSelectionChange: (([StorageObject]) -> Void)?
+
+    /// Files dropped onto a column, with the folder they were dropped into.
+    var onDropFiles: (([URL], BrowserLocation) -> Void)?
 
     /// Fired when the deepest browse location changes, so the shared path bar updates.
     var onLocationChange: ((BrowserLocation?) -> Void)?
@@ -683,6 +723,20 @@ final class ColumnBrowserViewController: NSViewController {
 
     // MARK: - Public interface
 
+    // MARK: - For tests (the columns themselves are private)
+
+    /// The folder each open column shows, left to right.
+    var openColumnLocations: [BrowserLocation] { columns.map(\.location) }
+
+    func rowCount(inColumnAt index: Int) -> Int {
+        index < columns.count ? columns[index].items.count : 0
+    }
+
+    /// Selects rows in column `index` as a click would, including what follows from it.
+    func select(keys: Set<String>, inColumnAt index: Int) {
+        columns[index].selectRows(forKeys: keys)
+    }
+
     func show(_ newLocation: BrowserLocation) {
         clearColumns()
         messageLabel.isHidden = true
@@ -762,8 +816,7 @@ final class ColumnBrowserViewController: NSViewController {
         // Re-run the load for every open column, preserving selected keys where possible.
         let snapshot = columns
         for col in snapshot {
-            let selectedKey = col.selectedObject?.key
-            loadColumnPreservingKey(col, selectedKey: selectedKey)
+            loadColumnPreservingKey(col, selectedKeys: Set(col.selectedObjects.map(\.key)))
         }
     }
 
@@ -799,9 +852,12 @@ final class ColumnBrowserViewController: NSViewController {
         // Pin the column view to the stack's full height.
         col.containerView.heightAnchor.constraint(equalTo: stackView.heightAnchor).isActive = true
 
-        col.onSelectionChange = { [weak self, weak col] object in
+        col.onSelectionChange = { [weak self, weak col] objects in
             guard let self, let col else { return }
-            self.handleSelection(object, inColumn: col)
+            self.handleSelection(objects, inColumn: col)
+        }
+        col.onDropFiles = { [weak self] urls, destination in
+            self?.onDropFiles?(urls, destination)
         }
         col.onEnter = { [weak self, weak col] in
             guard let self, let col else { return }
@@ -901,19 +957,17 @@ final class ColumnBrowserViewController: NSViewController {
     /// deepest selection when focus is elsewhere entirely (a toolbar click, say).
     private var activeColumn: BrowseColumn? {
         if let index = focusedColumnIndex { return columns[index] }
-        return columns.last(where: { $0.selectedObject != nil })
+        return columns.last(where: { !$0.selectedObjects.isEmpty })
     }
 
-    /// Everything selected, folders included. Columns are single-select, so at most one.
+    /// Everything selected in the active column, folders included.
     var selection: [StorageObject] {
-        activeColumn?.selectedObject.map { [$0] } ?? []
+        activeColumn?.selectedObjects ?? []
     }
 
-    /// The real blobs in the current selection. Columns are single-select, so this is
-    /// at most one object.
+    /// The real blobs in the current selection.
     var downloadableSelection: [StorageObject] {
-        guard let object = activeColumn?.selectedObject, !object.isPrefix else { return [] }
-        return [object]
+        selection.filter { !$0.isPrefix }
     }
 
     /// The container the selection lives in.
@@ -937,29 +991,36 @@ final class ColumnBrowserViewController: NSViewController {
         activeColumn?.forwardKeyDown(event)
     }
 
-    /// Cmd+C: copy the selected object — as a file promise for a real blob (so
+    /// Cmd+C: copy the selection — each real blob as a file promise (so
     /// pasting into the Finder downloads it), plus its path and URL. Matches the
     /// list surface.
     @objc func copy(_ sender: Any?) {
-        guard let col = activeColumn, let object = col.selectedObject else { return }
+        guard let col = activeColumn else { return }
+        let objects = col.selectedObjects
+        guard !objects.isEmpty else { return }
         let container = StorageContainer(name: col.location.container)
-        var key = object.key
-        if key.hasSuffix("/") { key.removeLast() }
-        let text = "\(container.name)/\(key)"
+        let path: (StorageObject) -> String = { object in
+            var key = object.key
+            if key.hasSuffix("/") { key.removeLast() }
+            return "\(container.name)/\(key)"
+        }
+        // The first item carries every path, so pasting as text gives the lot.
+        let joinedPaths = objects.map(path).joined(separator: "\n")
 
-        let writer: any NSPasteboardWriting
-        if let provider,
-           let promise = BlobFilePromiseProvider.make(
-               for: object, in: container, provider: provider, pathText: text
-           ) {
-            writer = promise
-        } else {
+        let writers: [any NSPasteboardWriting] = objects.enumerated().map { index, object in
+            let text = index == 0 ? joinedPaths : path(object)
+            if let provider,
+               let promise = BlobFilePromiseProvider.make(
+                   for: object, in: container, provider: provider, pathText: text
+               ) {
+                return promise
+            }
             let item = NSPasteboardItem()
             item.setString(text, forType: .string)
-            writer = item
+            return item
         }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([writer])
+        NSPasteboard.general.writeObjects(writers)
     }
 
     /// Move into the selected folder's (already-open) child column and focus it.
@@ -999,7 +1060,8 @@ final class ColumnBrowserViewController: NSViewController {
 
     // MARK: - Selection handling
 
-    private func handleSelection(_ object: StorageObject?, inColumn col: BrowseColumn) {
+    private func handleSelection(_ objects: [StorageObject], inColumn col: BrowseColumn) {
+        let object = objects.count == 1 ? objects.first : nil
         // Programmatic selection during auto-expand is driven by expand(); ignore it
         // here so we don't open a duplicate column.
         guard !isAutoExpanding, !isReselecting else { return }
@@ -1021,11 +1083,12 @@ final class ColumnBrowserViewController: NSViewController {
                 location = col.location
             }
         } else {
-            // Empty selection: location reflects this column's prefix.
+            // Nothing, or several things, selected: nothing opens, and the location
+            // is this column's own folder.
             location = col.location
         }
 
-        onSelectionChange?(object.map { [$0] } ?? [])
+        onSelectionChange?(objects)
     }
 
     private func scrollToRevealLastColumn() {
@@ -1090,7 +1153,7 @@ final class ColumnBrowserViewController: NSViewController {
     }
 
     /// `reload()` variant that preserves the previously selected row.
-    private func loadColumnPreservingKey(_ col: BrowseColumn, selectedKey: String?) {
+    private func loadColumnPreservingKey(_ col: BrowseColumn, selectedKeys: Set<String>) {
         guard let provider else { return }
 
         col.loadToken += 1
@@ -1117,18 +1180,18 @@ final class ColumnBrowserViewController: NSViewController {
                 col.reloadTable()
                 col.hideOverlays()
                 if objects.isEmpty { col.showEmptyLabel("Empty") }
-                let stillThere = selectedKey.map { key in col.items.contains { $0.key == key } } ?? false
-                if let key = selectedKey, stillThere {
-                    col.selectRow(for: key)
-                } else {
+                let remaining = selectedKeys.filter { key in col.items.contains { $0.key == key } }
+                if remaining.isEmpty {
                     col.deselectAll()
+                } else {
+                    col.selectRows(forKeys: remaining)
                 }
                 self.isReselecting = false
-                // The selected folder is gone: close what it had open, as if the user
+                // What was selected is gone: close what it had open, as if the user
                 // had clicked empty space, rather than leave a different row
                 // highlighted beside the old folder's contents.
-                if selectedKey != nil, !stillThere {
-                    self.handleSelection(nil, inColumn: col)
+                if !selectedKeys.isEmpty, remaining.isEmpty {
+                    self.handleSelection([], inColumn: col)
                 }
 
             case .failure(let error):
@@ -1190,9 +1253,9 @@ final class ColumnBrowserViewController: NSViewController {
         for col in columns {
             let wanted = col === target ? text : ""
             guard col.filterText != wanted else { continue }
-            let selectedKey = col.selectedObject?.key
+            let selectedKeys = Set(col.selectedObjects.map(\.key))
             col.filterText = wanted
-            if let selectedKey { col.selectRow(for: selectedKey) }
+            if !selectedKeys.isEmpty { col.selectRows(forKeys: selectedKeys) }
         }
     }
 
@@ -1204,10 +1267,10 @@ final class ColumnBrowserViewController: NSViewController {
         isReselecting = true
         defer { isReselecting = false }
         for col in columns {
-            let selectedKey = col.selectedObject?.key
+            let selectedKeys = Set(col.selectedObjects.map(\.key))
             col.setItems(col.allItems.sorted(by: sort.areInOrder))
             col.reloadTable()
-            if let selectedKey { col.selectRow(for: selectedKey) }
+            if !selectedKeys.isEmpty { col.selectRows(forKeys: selectedKeys) }
         }
     }
 

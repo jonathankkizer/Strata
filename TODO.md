@@ -200,8 +200,8 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   (`ConnectAccountViewController` ~line 413). Add the buttons and tooltips.
 
 - [ ] **U6. Can't drop files onto an empty folder or an error page.** *Dropping
-  onto an empty folder done in PR #38;* drops onto folder rows and spring-loading
-  are still open.
+  onto an empty folder done in PR #38; onto folder rows, in both views, in PR #43.*
+  Spring-loading is still open.
   `showEmptyState` hides the scroll view, and the table is the only drop target.
   Register the empty-state view (or the root) for `.fileURL` and forward to
   `onDropFiles`. Related: drops only land on the current folder
@@ -223,7 +223,7 @@ kill the CLI for the others; the 60 s timeout bounds it instead.
   when a transfer finishes while inactive (DESIGN.md promises it), and a tooltip or
   wrapping on the failure line in `TransferRowView` (~line 159).
 
-- [ ] **U10. Columns view is single-select and not a drop target.**
+- [x] **U10. Columns view is single-select and not a drop target.** (PR #43)
   `allowsMultipleSelection = false` (~line 223). Allow multi-select (cull columns
   to the right when count ≠ 1); per-column `validateDrop`/`acceptDrop`.
 

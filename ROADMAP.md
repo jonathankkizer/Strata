@@ -153,8 +153,6 @@ Still to do:
   empty state already handles, so they are left alone deliberately.
 
 ### Polish & preferences
-- **Drag-and-drop upload in the Columns view** (wired for the List view today;
-  dragging blobs *out* works in both).
 - **More Settings panes** (upload strategy, credentials, event-awareness) per
   `DESIGN.md` § Preferences.
 - **Multiple simultaneous account connections** in the sidebar.
