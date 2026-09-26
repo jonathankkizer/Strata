@@ -78,6 +78,9 @@ struct S3RESTClient: Sendable {
         var query: [(name: String, value: String)] = [
             ("list-type", "2"),
             ("max-keys", String(maxKeys)),
+            // Keys come back percent-encoded, so ones XML can't carry faithfully
+            // (leading or trailing spaces, control characters) survive the trip.
+            ("encoding-type", "url"),
         ]
         if !prefix.isEmpty { query.append(("prefix", prefix)) }
         if let delimiter { query.append(("delimiter", delimiter)) }
@@ -91,7 +94,7 @@ struct S3RESTClient: Sendable {
         guard let url = components.url else { throw S3Error.malformedResponse }
 
         let data = try await perform(method: "GET", url: url, payload: .empty, bucket: bucket).data
-        return try S3ObjectListXMLParser().parse(data)
+        return try S3ObjectListXMLParser(isURLEncoded: true, keepsFolderMarkers: delimiter == nil).parse(data)
     }
 
     /// Every page of a listing. S3 caps a response at 1000 keys, so a folder with more
@@ -259,6 +262,21 @@ struct S3RESTClient: Sendable {
     /// request about *when* to go multipart, not about how to chunk it.
     static let minimumPartSize = 5 * 1024 * 1024
 
+    /// S3's cap on parts per upload. At the default 8 MiB part size that tops out near
+    /// 78 GiB, so a larger file has to use bigger parts or it fails at part 10,001
+    /// after uploading everything before it.
+    static let maximumPartCount = 10_000
+
+    /// The part size actually used: at least what was asked for and S3's minimum, and
+    /// large enough that the file fits in `maximumPartCount` parts. Rounded up to a
+    /// whole MiB so the parts stay a tidy size.
+    static func effectivePartSize(requested: Int, fileSize: Int64) -> Int {
+        let mebibyte: Int64 = 1024 * 1024
+        let needed = (fileSize + Int64(maximumPartCount) - 1) / Int64(maximumPartCount)
+        let neededRounded = (needed + mebibyte - 1) / mebibyte * mebibyte
+        return max(requested, minimumPartSize, Int(neededRounded))
+    }
+
     func putObjectMultipart(
         bucket: String,
         key: String,
@@ -267,8 +285,8 @@ struct S3RESTClient: Sendable {
         partSize: Int = 8 * 1024 * 1024,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
-        let partSize = max(partSize, Self.minimumPartSize)
         let total = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let partSize = Self.effectivePartSize(requested: partSize, fileSize: total)
         let uploadID = try await createMultipartUpload(bucket: bucket, key: key, contentType: contentType)
 
         do {
@@ -306,7 +324,13 @@ struct S3RESTClient: Sendable {
             }
             try await completeMultipartUpload(bucket: bucket, key: key, uploadID: uploadID, parts: parts)
         } catch {
-            try? await abortMultipartUpload(bucket: bucket, key: key, uploadID: uploadID)
+            // The usual way here is the user pressing Stop, which cancels this task —
+            // and URLSession refuses to start a request from a cancelled task, so an
+            // abort made inline would never leave the machine and the parts would keep
+            // billing. An unstructured task doesn't inherit the cancellation.
+            await Task {
+                try? await abortMultipartUpload(bucket: bucket, key: key, uploadID: uploadID)
+            }.value
             throw error
         }
     }

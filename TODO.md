@@ -15,7 +15,12 @@ and protects data, so it goes first.
 
 ## Tier 1 — actions that hit the wrong object or lose data
 
-- [ ] **I1. Azure blob URLs drop empty path segments and the trailing slash.**
+All done in PR #34. Worth knowing for later work: a Data Lake (HNS) account
+answers `400 InvalidUri` to a blob URL ending in `/` and keeps directories at the
+slash-less name (verified live), and S3's `encoding-type=url` is form-style (a
+space arrives as `+`, a literal `+` as `%2B`).
+
+- [x] **I1. Azure blob URLs drop empty path segments and the trailing slash.**
   `AzureBlobRESTClient.blobURL(container:blobKey:)` (~line 361) splits the key with
   `omittingEmptySubsequences: true`, so `logs/` becomes `…/container/logs` and
   `a//b` becomes `a/b`. `DeletionPlan` (~line 91) always adds a folder's own key,
@@ -28,7 +33,7 @@ and protects data, so it goes first.
   keeps empty segments and the trailing slash), and use it for every blob URL.
   *Test:* URL for `logs/`, `a//b`, `/lead`, `sp ace`, `ü`, `#`, `?`, `%`, `+`.
 
-- [ ] **I2. S3 list parsing trims whitespace from keys.**
+- [x] **I2. S3 list parsing trims whitespace from keys.**
   `S3XMLParsing` `didEndElement` (~line 133) trims `Key` and `Prefix`, so
   `"report.csv "` is shown, downloaded and deleted as `report.csv` (a different
   object, or a 204 no-op). Stop trimming `Key`/`Prefix`. Better: request
@@ -36,7 +41,7 @@ and protects data, so it goes first.
   `StartAfter` — this also stops control characters in keys from breaking the XML
   parse. (Continuation tokens are not URL-encoded; leave them alone.)
 
-- [ ] **I3. Cancelling a multipart S3 upload never aborts it.**
+- [x] **I3. Cancelling a multipart S3 upload never aborts it.**
   `S3RESTClient.putObjectMultipart` catch block (~line 309) runs
   `try? await abortMultipartUpload` in the task that was just cancelled; URLSession's
   async API fails immediately with -999 there, so the DELETE never leaves. Parts
@@ -44,44 +49,50 @@ and protects data, so it goes first.
   cancellation) and await it. Consider noting the `AbortIncompleteMultipartUpload`
   lifecycle rule somewhere user-visible.
 
-- [ ] **I4. S3 part size is capped at the multipart threshold.**
+- [x] **I4. S3 part size is capped at the multipart threshold.**
   `S3Provider` (~line 150) passes `plan.singleShotThreshold` (8 MiB) as the part
   size. S3 allows 10,000 parts, so anything over ~78 GiB fails at part 10,001 after
   uploading everything else. *Fix:* part size =
   `max(threshold, 5 MiB, ceil(size / 10_000))`, rounded up to a MiB; keep the
   threshold for the single-vs-multipart decision only.
 
-- [ ] **I5. S3 full-key listing drops nested folder markers.**
+- [x] **I5. S3 full-key listing drops nested folder markers.**
   The `!key.hasSuffix("/") || size > 0` filter in `S3XMLParsing` (~line 152) also
   applies when `listAllKeys` lists without a delimiter, so zero-byte markers like
   `logs/sub/` survive a folder delete and `logs/` reappears. *Fix:* apply the
   filter only when listing with a delimiter (browse), not for `listAllKeys`.
 
-- [ ] **I6. Azure query strings leave `+` unencoded.**
+- [x] **I6. Azure query strings leave `+` unencoded.**
   `AzureBlobRESTClient` list requests (~lines 101-132) use `queryItems`, which
   leaves `+` bare; Azure decodes it as a space. Browsing `C++/` shows it empty; a
   `NextMarker` with `+` can break paging. *Fix:* build `percentEncodedQueryItems`
   with a strict encoder, as `putBlockList` already does for `blockid`.
 
-- [ ] **I7. Concurrent downloads with the same name overwrite each other.**
+- [x] **I7. Concurrent downloads with the same name overwrite each other.**
   Collision avoidance in `BrowserSplitViewController` (~line 513) only reserves
   names within one batch. Two separate Download actions that both produce
   `data.csv` pick the same URL and the second `replaceItemAt`s the first. *Fix:*
   also treat the `localURL` of every queued/active download in `TransferQueue` as
   taken.
 
-- [ ] **I8. One undecodable favorite wipes all favorites.**
+- [x] **I8. One undecodable favorite wipes all favorites.**
   `FavoritesStore.load` (~line 97) decodes the whole array with `try?`; one bad
   entry yields `[]` and the next `commit()` overwrites the stored data. *Fix:*
   decode element by element, skipping bad entries, and never write back over data
   that failed to load.
 
-- [ ] **I9. Debug code shipped in 0.4.1.** A `// SMOKE` block in
+- [x] **I9. Debug code shipped in 0.4.1.** A `// SMOKE` block in
   `AppDelegate.applicationShouldHandleReopen` (~lines 41-48) builds a throwaway
   connect sheet, reads `~/.aws/config`, creates an S3 provider and writes to
   stderr on every Dock click with no windows. Delete it.
 
 ## Tier 2 — reliability
+
+- [ ] **R0. The delete sheet under-reports when a folder can't be listed.**
+  `DeleteConfirmationViewController.expandFolders` turns a failed listing into
+  "no children" (deliberately — the comment explains why), so the sheet says
+  "1 object" for a folder of thousands. Nothing extra is deleted, but the count
+  is wrong. Show "Couldn't list the contents of X" in the sheet instead.
 
 - [ ] **R1. No retries or backoff anywhere.** Nothing handles 429/503,
   `SlowDown`, `ServerBusy`, `Retry-After`, a network drop or sleep/wake. One
@@ -261,6 +272,13 @@ and protects data, so it goes first.
   items as roadmap.
 
 ## Notes for whoever picks this up
+
+- Two live S3 tests fail on `main` for reasons outside the code: "Resolves a
+  bucket's real region" (the known `GetBucketLocation` issue in ROADMAP.md) and
+  "Reads real sizes and modification dates", which expects the objects seeded in
+  August to be under 30 days old. Loosen or reseed.
+- The Azure live suite runs against a Data Lake account; its assertions accept
+  both account shapes since PR #34.
 
 - The host is headless: AppKit UI can't be observed here (see the project
   memory). UI items need a check on a real Mac; say so in the PR.

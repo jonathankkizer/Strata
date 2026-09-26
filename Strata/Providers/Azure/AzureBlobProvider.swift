@@ -45,13 +45,7 @@ final class AzureBlobProvider: StorageProvider {
     }
 
     func objectURL(forKey key: String, in container: StorageContainer) -> URL? {
-        // Mirrors AzureBlobRESTClient.blobURL: append each key segment so slashes
-        // stay path separators and reserved characters get percent-encoded.
-        var url = endpoint.baseURL.appendingPathComponent(container.name)
-        for segment in key.split(separator: "/", omittingEmptySubsequences: true) {
-            url.appendPathComponent(String(segment))
-        }
-        return url
+        endpoint.url(container: container.name, key: key)
     }
 
     func download(fromKey key: String, in container: StorageContainer, to destinationURL: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) async throws {

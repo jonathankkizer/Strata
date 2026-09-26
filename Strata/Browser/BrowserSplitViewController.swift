@@ -501,8 +501,9 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
     }
 
     /// Queues one download per blob, resolving name collisions Finder-style. Names
-    /// already claimed earlier in this batch count as taken — the earlier files are
-    /// still in flight, so they aren't on disk to be found by `fileExists` yet.
+    /// claimed by any unfinished download — earlier in this batch or from another one
+    /// still in the queue — count as taken, since those files aren't on disk to be
+    /// found by `fileExists` yet.
     private func enqueueDownloads(
         _ objects: [StorageObject],
         in container: StorageContainer,
@@ -510,14 +511,14 @@ final class BrowserSplitViewController: NSSplitViewController, NSToolbarItemVali
         into directory: URL
     ) {
         let manager = FileManager.default
-        var reserved = Set<String>()
+        var reserved = TransferQueue.shared.claimedDownloadPaths
         for object in objects {
             let url = DownloadPlanning.uniqueURL(
                 fileName: Self.localFileName(for: object),
                 in: directory,
-                exists: { reserved.contains($0.path) || manager.fileExists(atPath: $0.path) }
+                exists: { reserved.contains($0.standardizedFileURL.path) || manager.fileExists(atPath: $0.path) }
             )
-            reserved.insert(url.path)
+            reserved.insert(url.standardizedFileURL.path)
             TransferQueue.shared.enqueueDownload(object: object, container: container, to: url, provider: provider)
         }
     }
