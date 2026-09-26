@@ -1,7 +1,8 @@
 # Roadmap
 
 The near-term backlog and known gaps. For the longer-term product vision
-(v1–v4 scoping), see [`DESIGN.md`](DESIGN.md) § Scoping.
+(v1–v4 scoping), see [`DESIGN.md`](DESIGN.md) § Scoping. Defects and polish items
+from the September 2026 review are tracked in [`TODO.md`](TODO.md).
 
 ## Where things stand
 
