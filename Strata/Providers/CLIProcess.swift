@@ -63,22 +63,24 @@ enum CLIProcess {
         process.standardOutput = stdout
         process.standardError = stderr
         let collected = OutputBuffers()
-        stdout.fileHandleForReading.readabilityHandler = { collected.appendOut($0.availableData) }
-        stderr.fileHandleForReading.readabilityHandler = { collected.appendErr($0.availableData) }
+        stdout.fileHandleForReading.readabilityHandler = { collected.receive($0.availableData, stream: .out, handle: $0) }
+        stderr.fileHandleForReading.readabilityHandler = { collected.receive($0.availableData, stream: .err, handle: $0) }
+
+        // Launched before anything races against it. Starting it inside a child task
+        // let a slow machine reach the timeout (or the user's cancel) before the
+        // process existed, so there was nothing yet to terminate and it ran on.
+        try Task.checkCancellation()
+        let exit = ExitSignal()
+        process.terminationHandler = { exit.fire($0.terminationStatus) }
+        do {
+            try process.run()
+        } catch {
+            throw Failure.launchFailed(message: error.localizedDescription)
+        }
 
         let status: Int32 = try await withTaskCancellationHandler {
             try await withThrowingTaskGroup(of: Int32?.self) { group in
-                group.addTask {
-                    try await withCheckedThrowingContinuation { continuation in
-                        process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-                        do {
-                            try process.run()
-                        } catch {
-                            process.terminationHandler = nil
-                            continuation.resume(throwing: Failure.launchFailed(message: error.localizedDescription))
-                        }
-                    }
-                }
+                group.addTask { await exit.wait() }
                 group.addTask {
                     try await Task.sleep(for: timeout)
                     return nil
@@ -92,14 +94,16 @@ enum CLIProcess {
                 return status
             }
         } onCancel: {
-            if process.isRunning { process.terminate() }
+            process.terminate()
         }
 
+        // Output can still be in the pipes after exit. Wait for both to reach end of
+        // file without blocking a thread (a blocking read here stalls Swift's small
+        // shared thread pool, and everything else with it), and not forever: a process
+        // the CLI started in the background can keep a pipe open after the CLI exits.
+        await collected.waitForEndOfFile(timeout: .seconds(2))
         stdout.fileHandleForReading.readabilityHandler = nil
         stderr.fileHandleForReading.readabilityHandler = nil
-        // Whatever arrived after the last handler call.
-        collected.appendOut(stdout.fileHandleForReading.readDataToEndOfFile())
-        collected.appendErr(stderr.fileHandleForReading.readDataToEndOfFile())
         try Task.checkCancellation()
 
         guard status == 0 else {
@@ -127,14 +131,92 @@ enum CLIProcess {
     }
 }
 
-/// Collects a process's output from pipe callbacks, which arrive on arbitrary threads.
+/// A process's exit status, awaitable. The termination handler can fire before
+/// anyone is waiting, so the status is kept for whoever arrives later.
+private final class ExitSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var status: Int32?
+    private var waiters: [CheckedContinuation<Int32, Never>] = []
+
+    func fire(_ status: Int32) {
+        let waiting = lock.withLock { () -> [CheckedContinuation<Int32, Never>] in
+            self.status = status
+            defer { waiters = [] }
+            return waiters
+        }
+        waiting.forEach { $0.resume(returning: status) }
+    }
+
+    func wait() async -> Int32 {
+        await withCheckedContinuation { continuation in
+            let known = lock.withLock { () -> Int32? in
+                if status == nil { waiters.append(continuation) }
+                return status
+            }
+            if let known { continuation.resume(returning: known) }
+        }
+    }
+}
+
+/// Collects a process's output from pipe callbacks, which arrive on arbitrary
+/// threads, and says when both pipes have reached end of file.
 private final class OutputBuffers: @unchecked Sendable {
+    enum Stream { case out, err }
+
     private let lock = NSLock()
     private var outData = Data()
     private var errData = Data()
+    private var openStreams = 2
+    private var waiter: CheckedContinuation<Void, Never>?
+    /// Set once the wait is over either way, so a waiter that only registers after
+    /// the timeout won doesn't wait on its own.
+    private var stoppedWaiting = false
 
-    func appendOut(_ data: Data) { lock.withLock { outData.append(data) } }
-    func appendErr(_ data: Data) { lock.withLock { errData.append(data) } }
+    /// An empty read is end of file. The handler is removed then, or the file
+    /// handle keeps calling it with empty reads.
+    func receive(_ data: Data, stream: Stream, handle: FileHandle) {
+        let finished: CheckedContinuation<Void, Never>? = lock.withLock {
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                openStreams -= 1
+                guard openStreams == 0 else { return nil }
+                defer { waiter = nil }
+                return waiter
+            }
+            switch stream {
+            case .out: outData.append(data)
+            case .err: errData.append(data)
+            }
+            return nil
+        }
+        finished?.resume()
+    }
+
+    func waitForEndOfFile(timeout: Duration) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                await withCheckedContinuation { continuation in
+                    let done = self.lock.withLock { () -> Bool in
+                        if self.openStreams == 0 || self.stoppedWaiting { return true }
+                        self.waiter = continuation
+                        return false
+                    }
+                    if done { continuation.resume() }
+                }
+            }
+            group.addTask { try? await Task.sleep(for: timeout) }
+            await group.next()
+            // Whichever came first, release the other.
+            let stranded: CheckedContinuation<Void, Never>? = lock.withLock {
+                stoppedWaiting = true
+                defer { waiter = nil }
+                return waiter
+            }
+            stranded?.resume()
+            group.cancelAll()
+        }
+    }
+
     var out: Data { lock.withLock { outData } }
     var err: Data { lock.withLock { errData } }
 }
