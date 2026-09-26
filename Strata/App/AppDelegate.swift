@@ -1,7 +1,8 @@
 import AppKit
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     private var browserWindowControllers: [BrowserWindowController] = []
     private var preferencesWindowController: PreferencesWindowController?
@@ -9,12 +10,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Held for the app's lifetime — NSMenu's delegate reference is weak.
     private let favoritesMenuController = FavoritesMenuController()
     let updateCoordinator = UpdateCoordinator()
+    private let transferActivity = TransferActivityMonitor()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.build(target: self, favoritesMenuDelegate: favoritesMenuController)
         openInitialWindow()
         NSApp.activate()
         updateCoordinator.start()
+        transferActivity.start()
+        UNUserNotificationCenter.current().delegate = self
         Task.detached(priority: .background) { PreviewCache.prune() }
     }
 
@@ -83,6 +87,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// button isn't shown.
     @objc func newWindowForTab(_ sender: Any?) {
         newBrowserTab(sender)
+    }
+
+    /// Window ▸ Transfers: shows the window, or closes it if it's already in front.
+    @objc func showTransfers(_ sender: Any?) {
+        TransfersWindowController.shared.toggle(sender)
+    }
+
+    // MARK: - Notifications
+
+    /// Clicking a "transfers finished" notification opens the list it's about.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        await MainActor.run {
+            NSApp.activate()
+            TransfersWindowController.shared.show(nil)
+        }
     }
 
     @objc func showStrataHelp(_ sender: Any?) {

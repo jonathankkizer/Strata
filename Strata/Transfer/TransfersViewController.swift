@@ -1,10 +1,27 @@
 import AppKit
 
-/// The transfers list shown in a popover from the toolbar. Rows show real progress,
-/// the emitted `data.api` as a badge, and a stop/retry control. Observes the queue
-/// to reload on structural changes and update progress bars in place on ticks.
+/// The transfers list: in a popover from the toolbar, and in the Transfers window
+/// (Window ▸ Transfers). Rows show real progress, the emitted event as a badge, and a
+/// stop/retry control. Observes the queue to reload on structural changes and update
+/// progress bars in place on ticks.
 @MainActor
-final class TransfersPopoverViewController: NSViewController {
+final class TransfersViewController: NSViewController {
+
+    enum Mode {
+        /// Sizes itself to its rows, up to a cap, the way a popover should.
+        case popover
+        /// Fills whatever size the window is; the window owns its frame.
+        case window
+    }
+
+    private let mode: Mode
+
+    init(mode: Mode) {
+        self.mode = mode
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
@@ -18,7 +35,8 @@ final class TransfersPopoverViewController: NSViewController {
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 180))
 
-        let title = NSTextField(labelWithString: "Transfers")
+        // The window already says "Transfers" in its title bar.
+        let title = NSTextField(labelWithString: mode == .popover ? "Transfers" : "")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -105,8 +123,10 @@ final class TransfersPopoverViewController: NSViewController {
         emptyLabel.isHidden = count > 0
         clearButton.isEnabled = transfers.contains { !$0.isActive }
 
-        let listHeight = min(CGFloat(max(count, 1)) * rowHeight, 400)
-        preferredContentSize = NSSize(width: contentWidth, height: 40 + (count == 0 ? 80 : listHeight))
+        if mode == .popover {
+            let listHeight = min(CGFloat(max(count, 1)) * rowHeight, 400)
+            preferredContentSize = NSSize(width: contentWidth, height: 40 + (count == 0 ? 80 : listHeight))
+        }
     }
 
     @objc private func updateVisibleProgress() {
@@ -124,7 +144,7 @@ final class TransfersPopoverViewController: NSViewController {
     }
 }
 
-extension TransfersPopoverViewController: NSTableViewDataSource, NSTableViewDelegate {
+extension TransfersViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func numberOfRows(in tableView: NSTableView) -> Int { transfers.count }
 
