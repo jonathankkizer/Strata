@@ -174,6 +174,17 @@ struct AzureBlobRESTClient: Sendable {
         to destinationURL: URL,
         onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
     ) async throws {
+        try await retryingOnceIfRejected {
+            try await downloadBlobOnce(container: container, key: key, to: destinationURL, onProgress: onProgress)
+        }
+    }
+
+    private func downloadBlobOnce(
+        container: String,
+        key: String,
+        to destinationURL: URL,
+        onProgress: (@Sendable (Int64, Int64) -> Void)?
+    ) async throws {
         let url = blobURL(container: container, blobKey: key)
         let token = try await tokenSource.token(asOf: Date())
         var request = URLRequest(url: url)
@@ -188,17 +199,10 @@ struct AzureBlobRESTClient: Sendable {
         var consumed = false
         defer { if !consumed { try? FileManager.default.removeItem(at: temporaryURL) } }
 
-        switch http.statusCode {
-        case 200..<300:
-            break
-        case 401:
-            throw StorageProviderError.unauthorized
-        case 403:
-            throw StorageProviderError.dataPlaneForbidden(account: endpoint.account)
-        default:
+        guard (200..<300).contains(http.statusCode) else {
             // A failed GET still writes a body — Azure's error XML — to the temp file.
             let body = (try? String(contentsOf: temporaryURL, encoding: .utf8)) ?? ""
-            throw AzureBlobError.httpError(status: http.statusCode, code: Self.errorCode(in: body), message: body)
+            throw Self.error(status: http.statusCode, body: body, account: endpoint.account)
         }
 
         // Move into place. `replaceItemAt` is atomic and handles the
@@ -335,9 +339,27 @@ struct AzureBlobRESTClient: Sendable {
     }
 
     /// Signs, sends, and validates a request. Returns body + response so HEAD
-    /// callers can read headers. Maps the 403 RBAC trap and 401 specifically.
+    /// callers can read headers.
     @discardableResult
     private func perform(method: String, url: URL, body: RequestBody?, extraHeaders: [String: String], delegate: (any URLSessionTaskDelegate)? = nil) async throws -> (data: Data, response: HTTPURLResponse) {
+        try await retryingOnceIfRejected {
+            try await performOnce(method: method, url: url, body: body, extraHeaders: extraHeaders, delegate: delegate)
+        }
+    }
+
+    /// A token can be refused while the cache still thinks it's good: revoked, or
+    /// minted for a different `az login` than the one now active. Dropping it and
+    /// asking once more costs one request, and saves the user from reconnecting.
+    private func retryingOnceIfRejected<T>(_ attempt: () async throws -> T) async throws -> T {
+        do {
+            return try await attempt()
+        } catch StorageProviderError.unauthorized {
+            await tokenSource.invalidate()
+            return try await attempt()
+        }
+    }
+
+    private func performOnce(method: String, url: URL, body: RequestBody?, extraHeaders: [String: String], delegate: (any URLSessionTaskDelegate)?) async throws -> (data: Data, response: HTTPURLResponse) {
         let token = try await tokenSource.token(asOf: Date())
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -361,16 +383,26 @@ struct AzureBlobRESTClient: Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw AzureBlobError.notHTTPResponse
         }
-        switch http.statusCode {
-        case 200..<300:
-            return (data, http)
-        case 401:
-            throw StorageProviderError.unauthorized
-        case 403:
-            throw StorageProviderError.dataPlaneForbidden(account: endpoint.account)
+        guard (200..<300).contains(http.statusCode) else {
+            throw Self.error(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "", account: endpoint.account)
+        }
+        return (data, http)
+    }
+
+    /// Maps a failed response onto something the UI can explain. A 403 is not always
+    /// a missing role: `AuthorizationFailure` is the account's firewall turning the
+    /// request away, and `AuthenticationFailed` is the token itself being refused.
+    static func error(status: Int, body: String, account: String) -> any Error {
+        let code = errorCode(in: body)
+        switch (status, code) {
+        case (401, _), (403, "AuthenticationFailed"), (403, "InvalidAuthenticationInfo"):
+            return StorageProviderError.unauthorized
+        case (403, "AuthorizationFailure"):
+            return StorageProviderError.networkRestricted(account: account)
+        case (403, _):
+            return StorageProviderError.dataPlaneForbidden(account: account)
         default:
-            let bodyString = String(data: data, encoding: .utf8) ?? ""
-            throw AzureBlobError.httpError(status: http.statusCode, code: Self.errorCode(in: bodyString), message: bodyString)
+            return AzureBlobError.httpError(status: status, code: code, message: body)
         }
     }
 

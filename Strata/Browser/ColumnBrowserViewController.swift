@@ -348,9 +348,10 @@ private final class BrowseColumn: NSObject, NSTableViewDataSource, NSTableViewDe
         emptyLabel.isHidden = true
     }
 
-    func showEmptyLabel(_ text: String) {
+    func showEmptyLabel(_ text: String, toolTip: String? = nil) {
         spinner.stopAnimation(nil)
         emptyLabel.stringValue = text
+        emptyLabel.toolTip = toolTip
         emptyLabel.isHidden = false
     }
 
@@ -1045,7 +1046,7 @@ final class ColumnBrowserViewController: NSViewController {
             case .failure(let error):
                 col.items = []
                 col.reloadTable()
-                col.showEmptyLabel(Self.shortErrorMessage(error))
+                self.showError(error, in: col)
             }
         }
     }
@@ -1082,7 +1083,7 @@ final class ColumnBrowserViewController: NSViewController {
             case .failure(let error):
                 col.items = []
                 col.reloadTable()
-                col.showEmptyLabel(Self.shortErrorMessage(error))
+                self.showError(error, in: col)
             }
         }
     }
@@ -1142,13 +1143,10 @@ final class ColumnBrowserViewController: NSViewController {
 
     // MARK: - Error messages (compact one-line)
 
-    private static func shortErrorMessage(_ error: Error) -> String {
-        if case StorageProviderError.dataPlaneForbidden = error {
-            return "No data-plane access"
-        } else if case StorageProviderError.unauthorized = error {
-            return "Not authorized"
-        } else {
-            return error.localizedDescription
-        }
+    /// A column is narrow, so it shows the one-line summary; the advice that goes
+    /// with it is in the tooltip rather than lost.
+    private func showError(_ error: Error, in column: BrowseColumn) {
+        let message = StorageErrorText.message(for: error, kind: provider?.kind ?? .azureBlob)
+        column.showEmptyLabel(message.summary, toolTip: message.full)
     }
 }

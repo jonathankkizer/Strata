@@ -8,6 +8,49 @@ enum AWSCLIError: Error, Sendable, Equatable {
     /// The CLI resolved the profile but the credentials it returned have already
     /// expired — an SSO session that needs `aws sso login` again.
     case credentialsExpired(profile: String)
+    case timedOut(seconds: Int)
+
+    init(_ failure: CLIProcess.Failure) {
+        switch failure {
+        case .launchFailed(let message): self = .launchFailed(message: message)
+        case .exited(let status, let message): self = .commandFailed(status: status, message: message)
+        case .timedOut(let seconds): self = .timedOut(seconds: seconds)
+        }
+    }
+}
+
+extension AWSCLIError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .binaryNotFound:
+            return "Strata couldn\u{2019}t find the AWS CLI."
+        case .launchFailed(let message):
+            return "The AWS CLI couldn\u{2019}t be started: \(message)"
+        case .commandFailed(_, let message):
+            return message
+        case .malformedResponse:
+            return "The AWS CLI returned credentials Strata couldn\u{2019}t read."
+        case .credentialsExpired(let profile):
+            return "The sign-in for the \u{201C}\(profile)\u{201D} profile has expired."
+        case .timedOut(let seconds):
+            return "The AWS CLI didn\u{2019}t answer within \(seconds) seconds."
+        }
+    }
+
+    var recoverySuggestion: String? {
+        switch self {
+        case .binaryNotFound:
+            return "Install it with \u{201C}brew install awscli\u{201D} (version 2.13 or later). If it\u{2019}s installed somewhere unusual, set its location in Settings \u{25B8} Accounts."
+        case .commandFailed:
+            return "Check that \u{201C}aws configure export-credentials\u{201D} works for this profile in Terminal. Strata needs AWS CLI 2.13 or later."
+        case .malformedResponse:
+            return "Updating the AWS CLI may help."
+        case .credentialsExpired(let profile):
+            return "Run \u{201C}aws sso login --profile \(profile)\u{201D} in Terminal, then try again."
+        case .timedOut, .launchFailed:
+            return "Check that the AWS CLI works in Terminal."
+        }
+    }
 }
 
 /// Supplies SigV4 credentials by shelling out to
@@ -21,15 +64,14 @@ enum AWSCLIError: Error, Sendable, Equatable {
 /// to maintain; asking the tool the user has already configured is both less work and
 /// more correct, since it stays in step with however they set things up.
 ///
-/// The same two macOS realities apply as for `az`:
-/// - a GUI app launched from Finder doesn't inherit the shell PATH, so the binary is
-///   resolved explicitly (Preferences override first)
-/// - the CLI is a Python program with a noticeable cold start, so credentials are
-///   cached and refreshed shortly before expiry rather than fetched per request
+/// As with `az`, the CLI is a Python program with a noticeable cold start, so
+/// credentials are cached, refreshed shortly before expiry, and shared by concurrent
+/// callers. Finding and running the binary is `CLIProcess`'s job.
 actor AWSCLICredentialProvider: AWSCredentialSource {
 
     struct Configuration: Sendable {
-        /// Preferences "Path to AWS CLI" override; tried before the search paths.
+        /// Where `aws` is, for this provider only. Nil falls back to the Settings ▸
+        /// Accounts choice, then to searching the usual install locations.
         var explicitBinaryPath: String?
         /// Which profile to resolve. Defaults to `AWS_PROFILE`, else `default`.
         var profile: String
@@ -53,6 +95,8 @@ actor AWSCLICredentialProvider: AWSCredentialSource {
     /// instead of requiring an installed, configured AWS CLI.
     private let runner: @Sendable ([String]) async throws -> Data
     private var cached: AWSCredentials?
+    /// The fetch in progress, so concurrent callers share one `aws` run.
+    private var refreshing: Task<AWSCredentials, any Error>?
 
     init(
         configuration: Configuration = Configuration(),
@@ -60,8 +104,15 @@ actor AWSCLICredentialProvider: AWSCredentialSource {
     ) {
         self.configuration = configuration
         self.runner = runner ?? { arguments in
-            let binary = try Self.resolveBinary(explicit: configuration.explicitBinaryPath)
-            return try await Self.run(binary: binary, arguments: arguments)
+            let explicitPath = configuration.explicitBinaryPath ?? StrataDefaults.awsCLIPath
+            guard let binary = await CLIProcess.locate("aws", explicitPath: explicitPath) else {
+                throw AWSCLIError.binaryNotFound
+            }
+            do {
+                return try await CLIProcess.run(binary: binary, arguments: arguments)
+            } catch let failure as CLIProcess.Failure {
+                throw AWSCLIError(failure)
+            }
         }
     }
 
@@ -69,7 +120,15 @@ actor AWSCLICredentialProvider: AWSCredentialSource {
         if let cached, cached.isValid(asOf: now, refreshMargin: configuration.refreshMargin) {
             return cached
         }
-        let fresh = try await fetch()
+        let fresh: AWSCredentials
+        if let refreshing {
+            fresh = try await refreshing.value
+        } else {
+            let task = Task { try await fetch() }
+            refreshing = task
+            defer { refreshing = nil }
+            fresh = try await task.value
+        }
         // An expired result means the underlying session is gone — surfaced as its own
         // error so the UI can say "run aws sso login" instead of "access denied" after
         // the first signed request fails.
@@ -82,7 +141,7 @@ actor AWSCLICredentialProvider: AWSCredentialSource {
     }
 
     /// Drops the cache (e.g. after a 403), forcing a fresh resolve next call.
-    func invalidate() {
+    func invalidate() async {
         cached = nil
     }
 
@@ -98,50 +157,6 @@ actor AWSCLICredentialProvider: AWSCredentialSource {
             return try JSONDecoder().decode(ExportedCredentials.self, from: output).makeCredentials()
         } catch is DecodingError {
             throw AWSCLIError.malformedResponse
-        }
-    }
-
-    private static func resolveBinary(explicit: String?) throws -> String {
-        let fileManager = FileManager.default
-        if let explicit, fileManager.isExecutableFile(atPath: explicit) {
-            return explicit
-        }
-        for candidate in AWSAuth.awsCLISearchPaths where fileManager.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        throw AWSCLIError.binaryNotFound
-    }
-
-    /// Runs the CLI and returns stdout. The credential JSON is well under the pipe
-    /// buffer, so reading in the termination handler cannot deadlock.
-    private static func run(binary: String, arguments: [String]) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: binary)
-            process.arguments = arguments
-
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardOutput = stdout
-            process.standardError = stderr
-
-            process.terminationHandler = { process in
-                let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-                if process.terminationStatus == 0 {
-                    continuation.resume(returning: outData)
-                } else {
-                    let message = String(data: errData, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit \(process.terminationStatus)"
-                    continuation.resume(throwing: AWSCLIError.commandFailed(status: process.terminationStatus, message: message))
-                }
-            }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: AWSCLIError.launchFailed(message: error.localizedDescription))
-            }
         }
     }
 }

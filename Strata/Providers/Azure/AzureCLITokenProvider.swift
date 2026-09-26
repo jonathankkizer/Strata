@@ -1,10 +1,51 @@
 import Foundation
 
-enum AzureCLIError: Error, Sendable {
+enum AzureCLIError: Error, Sendable, Equatable {
     case binaryNotFound
     case launchFailed(message: String)
     case commandFailed(status: Int32, message: String)
     case malformedResponse
+    case timedOut(seconds: Int)
+
+    init(_ failure: CLIProcess.Failure) {
+        switch failure {
+        case .launchFailed(let message): self = .launchFailed(message: message)
+        case .exited(let status, let message): self = .commandFailed(status: status, message: message)
+        case .timedOut(let seconds): self = .timedOut(seconds: seconds)
+        }
+    }
+}
+
+extension AzureCLIError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .binaryNotFound:
+            return "Strata couldn\u{2019}t find the Azure CLI."
+        case .launchFailed(let message):
+            return "The Azure CLI couldn\u{2019}t be started: \(message)"
+        case .commandFailed(_, let message):
+            // `az` explains itself well ("Please run 'az login' to setup account."),
+            // so its own words are the most useful thing to show.
+            return message
+        case .malformedResponse:
+            return "The Azure CLI returned a token Strata couldn\u{2019}t read."
+        case .timedOut(let seconds):
+            return "The Azure CLI didn\u{2019}t answer within \(seconds) seconds."
+        }
+    }
+
+    var recoverySuggestion: String? {
+        switch self {
+        case .binaryNotFound:
+            return "Install it with \u{201C}brew install azure-cli\u{201D} and sign in with \u{201C}az login\u{201D}. If it\u{2019}s installed somewhere unusual, set its location in Settings \u{25B8} Accounts."
+        case .commandFailed:
+            return "Run \u{201C}az login\u{201D} in Terminal, then try again."
+        case .malformedResponse:
+            return "Updating the Azure CLI (\u{201C}az upgrade\u{201D}) may help."
+        case .timedOut, .launchFailed:
+            return "Check that \u{201C}az account get-access-token\u{201D} works in Terminal."
+        }
+    }
 }
 
 /// Mints Azure data-plane tokens by shelling out to
@@ -13,15 +54,15 @@ enum AzureCLIError: Error, Sendable {
 /// step for Azure support: everything else (list, upload, event prediction against
 /// real subscriptions) needs a token first.
 ///
-/// Two macOS realities are handled here:
-/// - GUI apps launched from Finder do not inherit the shell PATH, so the `az`
-///   binary is resolved explicitly (with a Preferences override on top).
-/// - `az` is a Python script with a ~1–2s cold start, so tokens are cached and
-///   refreshed shortly before expiry — never on the hot path of every request.
+/// `az` is a Python script with a ~1–2s cold start, so tokens are cached and
+/// refreshed shortly before expiry — never on the hot path of every request — and
+/// concurrent callers share one refresh rather than each starting their own `az`.
+/// Finding and running the binary is `CLIProcess`'s job.
 actor AzureCLITokenProvider: AzureTokenSource {
 
     struct Configuration: Sendable {
-        /// Preferences "Path to Azure CLI" override; tried before the search paths.
+        /// Where `az` is, for this provider only. Nil falls back to the Settings ▸
+        /// Accounts choice, then to searching the usual install locations.
         var explicitBinaryPath: String?
         /// Optional `--subscription` / `--tenant` scoping. The token is
         /// tenant-scoped; the target storage account's tenant must match.
@@ -46,6 +87,9 @@ actor AzureCLITokenProvider: AzureTokenSource {
 
     private let configuration: Configuration
     private var cached: AzureAccessToken?
+    /// The refresh in progress, if any. Without this, every request that arrives
+    /// while the cache is stale starts its own `az` — eight at once during a delete.
+    private var refreshing: Task<AzureAccessToken, any Error>?
 
     init(configuration: Configuration = Configuration()) {
         self.configuration = configuration
@@ -57,28 +101,23 @@ actor AzureCLITokenProvider: AzureTokenSource {
         if let cached, cached.expiresOn.timeIntervalSince(now) > configuration.refreshMargin {
             return cached
         }
-        let fresh = try await mint()
+        if let refreshing {
+            return try await refreshing.value
+        }
+        let task = Task { try await mint() }
+        refreshing = task
+        defer { refreshing = nil }
+        let fresh = try await task.value
         cached = fresh
         return fresh
     }
 
     /// Drops the cached token (e.g. after a 401), forcing a fresh mint next call.
-    func invalidate() {
+    func invalidate() async {
         cached = nil
     }
 
     // MARK: - Minting
-
-    private func resolveBinary() throws -> String {
-        let fileManager = FileManager.default
-        if let explicit = configuration.explicitBinaryPath, fileManager.isExecutableFile(atPath: explicit) {
-            return explicit
-        }
-        for candidate in AzureAuth.azureCLISearchPaths where fileManager.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        throw AzureCLIError.binaryNotFound
-    }
 
     private func mint() async throws -> AzureAccessToken {
         var arguments = [
@@ -93,45 +132,20 @@ actor AzureCLITokenProvider: AzureTokenSource {
             arguments += ["--tenant", tenant]
         }
 
-        let binary = try resolveBinary()
-        let output = try await Self.run(binary: binary, arguments: arguments)
+        let explicitPath = configuration.explicitBinaryPath ?? StrataDefaults.azureCLIPath
+        guard let binary = await CLIProcess.locate("az", explicitPath: explicitPath) else {
+            throw AzureCLIError.binaryNotFound
+        }
+        let output: Data
+        do {
+            output = try await CLIProcess.run(binary: binary, arguments: arguments)
+        } catch let failure as CLIProcess.Failure {
+            throw AzureCLIError(failure)
+        }
         do {
             return try JSONDecoder().decode(TokenPayload.self, from: output).makeToken()
         } catch is DecodingError {
             throw AzureCLIError.malformedResponse
-        }
-    }
-
-    /// Runs the CLI and returns stdout. `az`'s token JSON is a few KB — well under
-    /// the pipe buffer — so reading in the termination handler cannot deadlock.
-    private nonisolated static func run(binary: String, arguments: [String]) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: binary)
-            process.arguments = arguments
-
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardOutput = stdout
-            process.standardError = stderr
-
-            process.terminationHandler = { process in
-                let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-                if process.terminationStatus == 0 {
-                    continuation.resume(returning: outData)
-                } else {
-                    let message = String(data: errData, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit \(process.terminationStatus)"
-                    continuation.resume(throwing: AzureCLIError.commandFailed(status: process.terminationStatus, message: message))
-                }
-            }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: AzureCLIError.launchFailed(message: error.localizedDescription))
-            }
         }
     }
 }

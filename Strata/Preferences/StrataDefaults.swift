@@ -13,6 +13,22 @@ enum StrataDefaults {
         set { UserDefaults.standard.set(newValue, forKey: askBeforeUploadingKey) }
     }
 
+    private static let azureCLIPathKey = "AzureCLIPath"
+    private static let awsCLIPathKey = "AWSCLIPath"
+
+    /// Where the Azure and AWS CLIs are, when they aren't anywhere Strata looks by
+    /// itself. Nil (the default) means find them automatically. Read at each use, so
+    /// a change applies to the next token fetch without reconnecting.
+    static var azureCLIPath: String? {
+        get { UserDefaults.standard.string(forKey: azureCLIPathKey).flatMap { $0.isEmpty ? nil : $0 } }
+        set { UserDefaults.standard.set(newValue, forKey: azureCLIPathKey) }
+    }
+
+    static var awsCLIPath: String? {
+        get { UserDefaults.standard.string(forKey: awsCLIPathKey).flatMap { $0.isEmpty ? nil : $0 } }
+        set { UserDefaults.standard.set(newValue, forKey: awsCLIPathKey) }
+    }
+
     private static let inspectorVisibleKey = "InspectorVisible"
 
     /// Whether the object inspector pane is shown. Off by default (a new window

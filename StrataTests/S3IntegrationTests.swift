@@ -72,8 +72,9 @@ struct S3IntegrationTests {
         #expect(medium.size == 300_000)
         #expect(medium.storageClass == "STANDARD")
         let modified = try #require(medium.lastModified)
-        // Seeded moments ago; a mis-parsed date would land decades away.
-        #expect(abs(modified.timeIntervalSinceNow) < 60 * 60 * 24 * 30)
+        // The seed data is reused across runs, so it can be months old — but a
+        // mis-parsed date lands decades away, which a two-year window still catches.
+        #expect(abs(modified.timeIntervalSinceNow) < 60 * 60 * 24 * 365 * 2)
     }
 
     /// Forces the continuation-token loop with a page size far below the object count.

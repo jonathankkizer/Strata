@@ -17,6 +17,9 @@ final class PreferencesWindowController: NSWindowController {
     }
 
     private var panes: [String: Pane] = [:]
+    /// Toolbar order. The dictionary above has none, and sorting its keys put the
+    /// panes in alphabetical order rather than General first.
+    private var paneOrder: [String] = []
     private var currentPaneIdentifier: String = ""
 
     // MARK: - Init
@@ -41,6 +44,12 @@ final class PreferencesWindowController: NSWindowController {
                 viewController: GeneralPreferencesViewController()
             ),
             Pane(
+                identifier: "accounts",
+                label: "Accounts",
+                symbolName: "person.crop.circle",
+                viewController: AccountsPreferencesViewController()
+            ),
+            Pane(
                 identifier: "updates",
                 label: "Updates",
                 symbolName: "arrow.down.circle",
@@ -48,6 +57,7 @@ final class PreferencesWindowController: NSWindowController {
             ),
         ] {
             panes[pane.identifier] = pane
+            paneOrder.append(pane.identifier)
         }
 
         let toolbar = NSToolbar(identifier: "StrataPreferencesToolbar")
@@ -87,15 +97,15 @@ final class PreferencesWindowController: NSWindowController {
 extension PreferencesWindowController: NSToolbarDelegate {
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        panes.keys.sorted().map { NSToolbarItem.Identifier($0) }
+        paneOrder.map { NSToolbarItem.Identifier($0) }
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        panes.keys.sorted().map { NSToolbarItem.Identifier($0) }
+        paneOrder.map { NSToolbarItem.Identifier($0) }
     }
 
     func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        panes.keys.sorted().map { NSToolbarItem.Identifier($0) }
+        paneOrder.map { NSToolbarItem.Identifier($0) }
     }
 
     func toolbar(
@@ -281,7 +291,7 @@ private final class GeneralPreferencesViewController: PreferencePaneViewControll
         return makeBox(titled: "Startup", content: [
             setting(checkbox, caption:
                 "Reopens the account and folder you were last browsing. Credentials are "
-                + "never stored — Strata asks the az CLI for a fresh token each time."
+                + "never stored; Strata asks the Azure or AWS CLI each time."
             ),
             setting(welcomeCheckbox, caption:
                 "Only when there's nothing to reconnect to — reconnecting takes "
@@ -394,6 +404,108 @@ private final class GeneralPreferencesViewController: PreferencePaneViewControll
             }
             // Rebuild either way, so cancelling restores the previous selection.
             self?.rebuildDownloadLocationMenu()
+        }
+    }
+}
+
+// MARK: - Accounts pane
+
+/// Where the Azure and AWS CLIs are. Strata finds them by itself in the usual places,
+/// so this is only for an install it can't find — and it shows what it found, so
+/// "which `az` is Strata using?" has an answer.
+private final class AccountsPreferencesViewController: PreferencePaneViewController {
+
+    private struct Tool {
+        let name: String
+        let label: String
+        let get: () -> String?
+        let set: (String?) -> Void
+    }
+
+    private let tools = [
+        Tool(name: "az", label: "Azure CLI:", get: { StrataDefaults.azureCLIPath }, set: { StrataDefaults.azureCLIPath = $0 }),
+        Tool(name: "aws", label: "AWS CLI:", get: { StrataDefaults.awsCLIPath }, set: { StrataDefaults.awsCLIPath = $0 }),
+    ]
+    private var fields: [NSTextField] = []
+
+    override func boxes() -> [NSBox] {
+        var rows: [NSView] = []
+        for (index, tool) in tools.enumerated() {
+            let label = NSTextField(labelWithString: tool.label)
+            label.alignment = .right
+            label.widthAnchor.constraint(equalToConstant: 70).isActive = true
+
+            let field = NSTextField(string: tool.get() ?? "")
+            field.placeholderString = "Looking\u{2026}"
+            field.lineBreakMode = .byTruncatingMiddle
+            field.tag = index
+            field.target = self
+            field.action = #selector(pathEdited(_:))
+            // Save on leaving the field too, not only on Return.
+            field.cell?.sendsActionOnEndEditing = true
+            field.setAccessibilityLabel(tool.label)
+            fields.append(field)
+
+            let choose = NSButton(title: "Choose\u{2026}", target: self, action: #selector(choose(_:)))
+            choose.bezelStyle = .rounded
+            choose.tag = index
+
+            let row = NSStackView(views: [label, field, choose])
+            row.orientation = .horizontal
+            row.alignment = .firstBaseline
+            row.spacing = 8
+            rows.append(row)
+        }
+        let caption = NSTextField(wrappingLabelWithString:
+            "Strata signs in through these tools, the same way they do in Terminal. "
+            + "Leave a field empty to let Strata find the tool itself; the grey text is "
+            + "what it found."
+        )
+        caption.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        caption.textColor = .secondaryLabelColor
+        rows.append(caption)
+        return [makeBox(titled: "Command-Line Tools", content: rows)]
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        for (index, tool) in tools.enumerated() {
+            fields[index].stringValue = tool.get() ?? ""
+        }
+        Task { @MainActor in
+            for (index, tool) in tools.enumerated() {
+                let found = await CLIProcess.locate(tool.name, explicitPath: nil)
+                fields[index].placeholderString = found ?? "Not found"
+            }
+        }
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        // Commit a path still being typed when the window closes or the pane changes.
+        view.window?.makeFirstResponder(nil)
+    }
+
+    @objc private func pathEdited(_ sender: NSTextField) {
+        let path = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        tools[sender.tag].set(path.isEmpty ? nil : path)
+    }
+
+    @objc private func choose(_ sender: NSButton) {
+        guard let window = view.window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.showsHiddenFiles = true
+        panel.treatsFilePackagesAsDirectories = true
+        panel.prompt = "Choose"
+        panel.message = "Choose the \u{201C}\(tools[sender.tag].name)\u{201D} program."
+        panel.directoryURL = URL(fileURLWithPath: "/usr/local/bin")
+        let index = sender.tag
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.fields[index].stringValue = url.path
+            self.tools[index].set(url.path)
         }
     }
 }

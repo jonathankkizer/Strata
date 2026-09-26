@@ -22,18 +22,15 @@ struct AWSCredentials: Sendable, Equatable {
 /// SSO-specific path are interchangeable — the same shape as `AzureTokenSource`.
 protocol AWSCredentialSource: Sendable {
     func credentials(asOf now: Date) async throws -> AWSCredentials
+    /// Forget any cached credentials, because the service just refused them.
+    func invalidate() async
+}
+
+extension AWSCredentialSource {
+    func invalidate() async {}
 }
 
 enum AWSAuth {
-    /// Candidate paths for the `aws` binary. A GUI app launched from Finder does not
-    /// inherit the shell PATH, so the CLI has to be resolved explicitly — the same
-    /// problem, and the same fix, as `az`.
-    static let awsCLISearchPaths = [
-        "/opt/homebrew/bin/aws",
-        "/usr/local/bin/aws",
-        "/usr/bin/aws",
-    ]
-
     /// Where the CLI keeps its configuration. Read directly only to enumerate profile
     /// names for the picker — never to resolve credentials, which is the CLI's job.
     static var configFileURL: URL {

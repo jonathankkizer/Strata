@@ -348,31 +348,14 @@ final class ObjectListViewController: NSViewController, NSTableViewDataSource, N
     }
 
     private func present(_ error: Error) {
-        if case StorageProviderError.dataPlaneForbidden(let account) = error {
-            showEmptyState(
-                symbol: "exclamationmark.triangle",
-                title: "Couldn\u{2019}t Load",
-                subtitle: "Authenticated, but this identity lacks a \u{201c}Storage Blob Data\u{201d} role on \u{201c}\(account).\u{201d}\n\nGrant Storage Blob Data Reader or Contributor to browse blob data \u{2014} management roles (Owner/Contributor/Reader) don\u{2019}t grant data-plane access.",
-                actionTitle: nil,
-                action: nil
-            )
-        } else if case StorageProviderError.unauthorized = error {
-            showEmptyState(
-                symbol: "exclamationmark.triangle",
-                title: "Couldn\u{2019}t Load",
-                subtitle: "Not authorized. Your token may have expired \u{2014} try reconnecting.",
-                actionTitle: nil,
-                action: nil
-            )
-        } else {
-            showEmptyState(
-                symbol: "exclamationmark.triangle",
-                title: "Couldn\u{2019}t Load",
-                subtitle: "Couldn\u{2019}t load this location.\n\n\(error.localizedDescription)",
-                actionTitle: nil,
-                action: nil
-            )
-        }
+        let kind = provider?.kind ?? .azureBlob
+        showEmptyState(
+            symbol: "exclamationmark.triangle",
+            title: "Couldn\u{2019}t Load",
+            subtitle: StorageErrorText.message(for: error, kind: kind).full,
+            actionTitle: nil,
+            action: nil
+        )
     }
 
     // MARK: - Message state (external call sites — do not remove)

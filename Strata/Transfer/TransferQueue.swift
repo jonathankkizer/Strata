@@ -171,7 +171,7 @@ final class TransferQueue {
                 item.state = .cancelled
                 failure = error
             } catch {
-                item.state = .failed(Self.describe(error))
+                item.state = .failed(StorageErrorText.summary(for: error, kind: item.provider.kind))
                 failure = error
             }
 
@@ -206,14 +206,5 @@ final class TransferQueue {
             self.progressPostScheduled = false
             NotificationCenter.default.post(name: .transferQueueProgress, object: self)
         }
-    }
-
-    // MARK: - Helpers
-
-    nonisolated private static func describe(_ error: Error) -> String {
-        if case StorageProviderError.dataPlaneForbidden = error {
-            return "Forbidden — needs a Storage Blob Data Contributor role."
-        }
-        return error.localizedDescription
     }
 }

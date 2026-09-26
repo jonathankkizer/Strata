@@ -88,6 +88,11 @@ space arrives as `+`, a literal `+` as `%2B`).
 
 ## Tier 2 — reliability
 
+R2–R6 done in PR #35: errors now go through `StorageErrorText` (one place, knows
+the cloud), and the CLIs run through `CLIProcess` (discovery, PATH, timeout,
+cancel). A refresh is shared by concurrent callers, so one caller's Stop doesn't
+kill the CLI for the others; the 60 s timeout bounds it instead.
+
 - [ ] **R0. The delete sheet under-reports when a folder can't be listed.**
   `DeleteConfirmationViewController.expandFolders` turns a failed listing into
   "no children" (deliberately — the comment explains why), so the sheet says
@@ -102,7 +107,7 @@ space arrives as `+`, a literal `+` as `%2B`).
   block IDs / part ETags on the `TransferItem` so Retry resumes. Downloads: resume
   data from `DownloadSession` (already structured for it).
 
-- [ ] **R2. CLI errors are unreadable.** `AzureCLIError` / `AWSCLIError` aren't
+- [x] **R2. CLI errors are unreadable.** `AzureCLIError` / `AWSCLIError` aren't
   `LocalizedError`, and `BrowserSplitViewController.connect`'s generic catch
   (~line 777) shows "Strata.AzureCLIError error 0" for a missing CLI or an expired
   login — the most common first-run failure. The connect picker
@@ -111,7 +116,7 @@ space arrives as `+`, a literal `+` as `%2B`).
   `recoverySuggestion` (install command; `az login`; `aws sso login --profile x`),
   map them in the connect path and the picker.
 
-- [ ] **R3. CLI discovery misses common installs; the override is unwired.**
+- [x] **R3. CLI discovery misses common installs; the override is unwired.**
   `AzureAuth` / `AWSAuth` search only `/opt/homebrew/bin`, `/usr/local/bin`,
   `/usr/bin`. pipx (`~/.local/bin`), MacPorts (`/opt/local/bin`), nix, asdf, conda
   fail when launched from Finder. `explicitBinaryPath` exists but nothing passes
@@ -120,7 +125,7 @@ space arrives as `+`, a literal `+` as `%2B`).
   paths, a login-shell fallback (`$SHELL -lc 'command -v az'`, cached), a Settings
   field for the path, and pass a sensible PATH into the subprocess environment.
 
-- [ ] **R4. CLI subprocesses: no timeout, no cancel, duplicated refreshes.**
+- [x] **R4. CLI subprocesses: no timeout, no cancel, duplicated refreshes.**
   Actor reentrancy across `await mint()` / `fetch()` in
   `AzureCLITokenProvider` / `AWSCLICredentialProvider` means every concurrent
   caller spawns its own `az`/`aws` when the cache expires (8 at once during a
@@ -128,12 +133,12 @@ space arrives as `+`, a literal `+` as `%2B`).
   single in-flight `Task` per refresh; `withTaskCancellationHandler` + a timeout
   that calls `process.terminate()`.
 
-- [ ] **R5. Token `invalidate()` is never called.** After a 401 / `ExpiredToken`
+- [x] **R5. Token `invalidate()` is never called.** After a 401 / `ExpiredToken`
   the cached token is reused until its refresh margin; static AWS keys are cached
   for the provider's lifetime. *Fix:* on `.unauthorized`, invalidate and retry the
   request once.
 
-- [ ] **R6. Clock skew reported as a permissions problem.** `RequestTimeTooSkewed`
+- [x] **R6. Clock skew reported as a permissions problem.** `RequestTimeTooSkewed`
   (403) falls through to `dataPlaneForbidden` in `S3RESTClient.error(...)`
   (~lines 519-538), sending the user to IAM. Give it its own error and message.
   Check Azure's equivalent (`AuthenticationFailed` with a time detail).
@@ -245,7 +250,7 @@ space arrives as `+`, a literal `+` as `%2B`).
     resistance → broken constraints for long keys (`InspectorViewController`
     ~line 463).
 - [ ] **F5. Settings.** Remove the minimize button; animate pane switches with the
-  top edge pinned; explicit pane order; refresh controls in `viewWillAppear` (the
+  top edge pinned; ~~explicit pane order~~ (PR #35); refresh controls in `viewWillAppear` (the
   Welcome window's checkbox leaves Settings stale).
 - [ ] **F6. Welcome window.** Return always means Connect even with a favorite
   selected; the "Reconnect to X" button is built once and goes stale.
@@ -255,7 +260,7 @@ space arrives as `+`, a literal `+` as `%2B`).
   (`BrowserSplitViewController` ~lines 788-790); straight vs curly apostrophes
   (`UpdateAlertController` ~lines 71, 93); "while the repository is private"
   (~line 84); "This copy is Strata 0.4.1." (`PreferencesWindowController`
-  ~line 425); "asks the az CLI for a fresh token" ignores AWS (~line 284); the
+  ~line 425); ~~"asks the az CLI for a fresh token" ignores AWS~~ (PR #35); the
   self-justifying Settings caption (~lines 287-288) and "Nothing is stored here."
   (`WelcomeWindowController` ~line 133). Run proposed wording past the author.
 - [ ] **F9. Localization.** Zero `String(localized:)`. Wrap user-facing strings,
