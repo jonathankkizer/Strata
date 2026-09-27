@@ -96,6 +96,14 @@ final class InspectorViewController: NSViewController {
         let edge = NSBox()
         edge.boxType = .separator
         edge.translatesAutoresizingMaskIntoConstraints = false
+        // A separator box decides it is horizontal while its frame is still empty, and
+        // then asks for an intrinsic height of 1 at hugging priority 750 — above the
+        // priority of a window resize, so the whole window got held at toolbar height.
+        // The constraints below set its size; it should want nothing of its own.
+        for orientation in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
+            edge.setContentHuggingPriority(.init(1), for: orientation)
+            edge.setContentCompressionResistancePriority(.init(1), for: orientation)
+        }
         separator = edge
 
         let container = NSView()

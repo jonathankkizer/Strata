@@ -24,6 +24,30 @@ struct TitlebarBackdropTests {
         #expect(separator.superview === inspector.view)
     }
 
+    /// The separator is an `NSBox`, which starts out thinking it is horizontal and
+    /// hugs a 1pt height at a priority above a window drag's. Unchecked, it held the
+    /// whole window at toolbar height.
+    @Test("The inspector's edge doesn't stop the window growing taller")
+    func inspectorSeparatorDoesNotFixHeight() throws {
+        let inspector = InspectorViewController()
+        inspector.loadViewIfNeeded()
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 100))
+        inspector.view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(inspector.view)
+        let drag = inspector.view.heightAnchor.constraint(equalToConstant: 600)
+        drag.priority = .dragThatCanResizeWindow
+        NSLayoutConstraint.activate([
+            inspector.view.topAnchor.constraint(equalTo: host.topAnchor),
+            inspector.view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            inspector.view.widthAnchor.constraint(equalToConstant: 260),
+            drag,
+        ])
+        host.layoutSubtreeIfNeeded()
+        #expect(inspector.view.frame.height == 600)
+        let separator = try #require(inspector.separator)
+        #expect(separator.frame.height > 500)
+    }
+
     @Test("The inspector paints the same backdrop as the browse panes")
     func inspectorMatchesContentBackdrop() throws {
         let inspector = InspectorViewController()
