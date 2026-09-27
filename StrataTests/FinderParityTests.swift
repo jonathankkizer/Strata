@@ -20,6 +20,17 @@ struct KindDescriptionTests {
         #expect(StorageObject(key: "notes.txt", size: 1).utType == .plainText)
         #expect(StorageObject(key: "mystery", size: 1).utType == .data)
     }
+
+    /// Most uploaders that don't know a file's type send application/octet-stream,
+    /// which says nothing — the extension is the better guess.
+    @Test("A generic content type doesn't hide what the extension says")
+    func genericContentTypeFallsThrough() {
+        let csv = StorageObject(key: "census/2025_1/admissions.csv", size: 1, contentType: "application/octet-stream")
+        #expect(csv.utType == .commaSeparatedText)
+        #expect(StorageObject(key: "mystery", size: 1, contentType: "application/octet-stream").utType == .data)
+        // A specific content type still wins over the extension.
+        #expect(StorageObject(key: "report.txt", size: 1, contentType: "application/pdf").utType == .pdf)
+    }
 }
 
 @Suite("Folder upload through a symlink")
