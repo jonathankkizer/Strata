@@ -66,6 +66,15 @@ enum StrataDefaults {
         set { UserDefaults.standard.set(newValue, forKey: inspectorVisibleKey) }
     }
 
+    private static let inspectorShowsMoreKey = "InspectorShowsMore"
+
+    /// Whether the inspector's Information section is expanded ("Show More"). Sticks
+    /// once chosen, like the Finder's.
+    static var inspectorShowsMore: Bool {
+        get { UserDefaults.standard.bool(forKey: inspectorShowsMoreKey) }
+        set { UserDefaults.standard.set(newValue, forKey: inspectorShowsMoreKey) }
+    }
+
     private static let browseModeKey = "BrowseMode"
 
     /// The last browse layout (List vs Columns), restored on the next launch.

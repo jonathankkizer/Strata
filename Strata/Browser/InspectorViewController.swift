@@ -27,10 +27,14 @@ final class InspectorViewController: NSViewController {
         }
     }
 
-    /// Between rows within a section. Needs to stay comfortably larger than the
-    /// line spacing inside a wrapped value, or a multi-line value and the row below
-    /// it read as one block.
-    private static let rowSpacing: CGFloat = 7
+    /// The pane's side margins, and what everything in it lines up on.
+    private static let inset: CGFloat = 12
+    /// Above and below a row's text, so rows sit on a comfortable pitch with the
+    /// hairline between them.
+    private static let rowPadding: CGFloat = 5
+    private static let sectionSpacing: CGFloat = 20
+    /// The Finder's size for a file icon in its preview pane.
+    private static let previewSize: CGFloat = 128
 
     private let stack = NSStackView()
     private let scrollView = NSScrollView()
@@ -41,6 +45,9 @@ final class InspectorViewController: NSViewController {
     /// provider's own vocabulary, so with no provider connected there is nothing
     /// truthful to predict and the section is omitted.
     private var providerKind: ProviderKind?
+    /// What's on show, so Show More can rebuild it without another round trip.
+    private var shown: [StorageObject] = []
+    private var shownMetadata: ObjectMetadata?
 
     private let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -58,8 +65,8 @@ final class InspectorViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.distribution = .fill
-        stack.spacing = 16
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        stack.spacing = 0
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: Self.inset, bottom: 20, right: Self.inset)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let document = FlippedView()
@@ -146,6 +153,8 @@ final class InspectorViewController: NSViewController {
         loadToken += 1
         let token = loadToken
         providerKind = provider?.kind
+        shown = objects
+        shownMetadata = nil
 
         guard objects.count == 1 else {
             rebuildForMultiple(objects)
@@ -160,233 +169,223 @@ final class InspectorViewController: NSViewController {
             let container = StorageContainer(name: containerName)
             guard let metadata = try? await provider.fetchMetadata(for: object, in: container) else { return }
             guard token == self.loadToken else { return }
+            self.shownMetadata = metadata
             self.rebuild(for: object, metadata: metadata)
         }
     }
 
     // MARK: - Building
+    //
+    // Laid out after the Finder's preview pane: a large icon centred at the top, then
+    // the name and a kind-and-size line flush left, then titled sections of rows with
+    // the label on the left, the value on the right, and a hairline between rows.
+
+    private func clear() {
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+    }
+
+    /// Adds `view` spanning the pane between the stack's insets. `NSStackView` has no
+    /// fill alignment for a vertical stack, so the width is pinned here; without it
+    /// every row shrank to its content and the stack lined them all up on the right.
+    private func addFullWidth(_ view: NSView, spacingAfter: CGFloat? = nil) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -2 * Self.inset).isActive = true
+        if let spacingAfter { stack.setCustomSpacing(spacingAfter, after: view) }
+    }
 
     private func rebuild(for object: StorageObject?, metadata: ObjectMetadata?) {
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        clear()
 
         guard let object else {
-            stack.alignment = .centerX
-            stack.addArrangedSubview(emptyState())
+            addFullWidth(emptyState())
             return
         }
 
-        // .width stretches arranged subviews to the inspector width, so the header's
-        // centerX actually centers (sections keep their content leading-aligned).
-        stack.alignment = .width
-        stack.addArrangedSubview(headerView(for: object, metadata: metadata))
+        let type = StorageObject.utType(contentType: metadata?.contentType ?? object.contentType, key: object.key)
+        let size = metadata?.size ?? object.size
+        let icon = object.isPrefix ? NSWorkspace.shared.icon(for: .folder) : NSWorkspace.shared.icon(for: type)
+        let kind = object.isPrefix ? "Folder" : (type.localizedDescription ?? "Document")
+        addHeader(
+            icon: icon,
+            name: lastComponent(of: object.key),
+            subtitle: object.isPrefix ? kind : "\(kind) – \(byteFormatter.string(fromByteCount: size))"
+        )
 
         if object.isPrefix {
-            stack.addArrangedSubview(section("Kind", rows: [Row("Type", "Folder (prefix)")]))
+            addFullWidth(section("Information", rows: [Row("Path", object.key, wraps: false)]), spacingAfter: Self.sectionSpacing)
             return
         }
 
-        // No "Name" row: the header above already shows the filename, at a size
-        // meant to be read. Repeating it here cost four wrapped lines to say the
-        // same thing — Finder's Get Info doesn't repeat it either.
-        var general: [Row] = [
-            Row("Path", object.key, wraps: false),
-            Row("Size", byteFormatter.string(fromByteCount: metadata?.size ?? object.size)),
-            Row("Tier", metadata?.storageClass ?? object.storageClass ?? "—"),
-            Row("Type", metadata?.contentType ?? object.contentType ?? "—", wraps: false),
-        ]
-        if let blobType = metadata?.blobType { general.append(Row("Blob Type", blobType)) }
+        // Kind and size are in the line under the name, as the Finder has them. The
+        // rows start with what that line doesn't say, and "Show More" holds the
+        // details only some people need.
+        var rows: [Row] = []
         if let modified = metadata?.lastModified ?? object.lastModified {
-            general.append(Row("Modified", dateFormatter.string(from: modified)))
+            rows.append(Row("Modified", dateFormatter.string(from: modified)))
         }
-        if let etag = metadata?.etag ?? object.etag {
-            general.append(Row("ETag", Self.displayETag(etag), wraps: false))
+        rows.append(Row("Tier", metadata?.storageClass ?? object.storageClass ?? "—"))
+        rows.append(Row("Path", object.key, wraps: false))
+        if StrataDefaults.inspectorShowsMore {
+            rows.append(Row("Size", Self.exactSize(size)))
+            rows.append(Row("Content Type", metadata?.contentType ?? object.contentType ?? "—", wraps: false))
+            if let blobType = metadata?.blobType { rows.append(Row("Blob Type", blobType)) }
+            if let etag = metadata?.etag ?? object.etag {
+                rows.append(Row("ETag", Self.displayETag(etag), wraps: false))
+            }
         }
-        stack.addArrangedSubview(section("General", rows: general))
+        addFullWidth(section("Information", rows: rows, accessory: showMoreButton()), spacingAfter: Self.sectionSpacing)
 
         if let custom = metadata?.custom, !custom.isEmpty {
             let rows = custom.sorted { $0.key < $1.key }.map { Row($0.key, $0.value) }
-            stack.addArrangedSubview(section("Metadata", rows: rows))
+            addFullWidth(section("Metadata", rows: rows), spacingAfter: Self.sectionSpacing)
         }
 
         if let providerKind {
-            stack.addArrangedSubview(writeEventSection(for: object, kind: providerKind))
+            addFullWidth(writeEventSection(for: object, kind: providerKind), spacingAfter: Self.sectionSpacing)
         }
+
+        addFullWidth(quickActions(multiple: false))
     }
 
-    /// Finder's multiple-selection Get Info: how many, how big, and what mix.
+    /// Finder's multiple selection: a stack of documents, how many, how big, and
+    /// what mix.
     private func rebuildForMultiple(_ objects: [StorageObject]) {
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        clear()
 
         guard !objects.isEmpty else {
-            stack.alignment = .centerX
-            stack.addArrangedSubview(emptyState())
+            addFullWidth(emptyState())
             return
         }
 
         let folders = objects.filter(\.isPrefix)
         let blobs = objects.filter { !$0.isPrefix }
         // Folder sizes are unknown without a recursive walk, so the total covers the
-        // blobs and the caption says so rather than quietly under-reporting.
+        // blobs, and the rows say how many folders it leaves out.
         let totalBytes = blobs.reduce(Int64(0)) { $0 + $1.size }
 
-        stack.alignment = .width
-        stack.addArrangedSubview(multipleHeaderView(count: objects.count, totalBytes: totalBytes, blobCount: blobs.count))
+        addHeader(
+            icon: NSImage(named: NSImage.multipleDocumentsName) ?? NSWorkspace.shared.icon(for: .data),
+            name: "\(objects.count) items",
+            subtitle: blobs.isEmpty ? "Folders" : byteFormatter.string(fromByteCount: totalBytes)
+        )
 
-        var rows: [Row] = [Row("Items", "\(objects.count)")]
-        if !folders.isEmpty {
-            rows.append(Row("Folders", "\(folders.count)"))
-        }
+        var rows: [Row] = []
+        if !folders.isEmpty { rows.append(Row("Folders", "\(folders.count)")) }
         if !blobs.isEmpty {
             rows.append(Row("Blobs", "\(blobs.count)"))
-            rows.append(Row("Total Size", byteFormatter.string(fromByteCount: totalBytes)))
             if let largest = blobs.max(by: { $0.size < $1.size }) {
-                rows.append(Row("Largest", "\(lastComponent(of: largest.key)) — \(byteFormatter.string(fromByteCount: largest.size))"))
+                rows.append(Row("Largest", "\(lastComponent(of: largest.key)) – \(byteFormatter.string(fromByteCount: largest.size))", wraps: false))
             }
         }
-        stack.addArrangedSubview(section("Selection", rows: rows))
+        addFullWidth(section("Information", rows: rows), spacingAfter: Self.sectionSpacing)
 
         // The differentiator still applies in bulk: re-uploading this selection emits
         // a mix of events, and which ones is exactly what the user wants to know.
-        if !blobs.isEmpty, let providerKind {
-            stack.addArrangedSubview(multipleWriteEventSection(for: blobs, kind: providerKind))
+        if !blobs.isEmpty {
+            if let providerKind {
+                addFullWidth(multipleWriteEventSection(for: blobs, kind: providerKind), spacingAfter: Self.sectionSpacing)
+            }
+            addFullWidth(quickActions(multiple: true))
         }
     }
 
-    private func multipleHeaderView(count: Int, totalBytes: Int64, blobCount: Int) -> NSView {
-        let icon = NSImageView()
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 44, weight: .thin)
-        icon.contentTintColor = .secondaryLabelColor
+    // MARK: - Header
 
-        let name = NSTextField(labelWithString: "\(count) items selected")
-        name.font = .systemFont(ofSize: 13, weight: .semibold)
-        name.alignment = .center
-
-        let subtitle = NSTextField(labelWithString: blobCount == 0
-            ? "Folders"
-            : byteFormatter.string(fromByteCount: totalBytes))
-        subtitle.font = .systemFont(ofSize: 11)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.alignment = .center
-
-        let container = NSStackView(views: [icon, name, subtitle])
-        container.orientation = .vertical
-        container.alignment = .centerX
-        container.spacing = 6
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        let wrapper = NSView()
-        wrapper.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(container)
+    private func addHeader(icon: NSImage, name: String, subtitle: String) {
+        // The icon is centred in the pane, like the Finder's preview, and as large as
+        // the pane allows up to the size the Finder uses for a file with no preview.
+        let image = NSImageView()
+        image.image = icon
+        image.imageScaling = .scaleProportionallyUpOrDown
+        image.translatesAutoresizingMaskIntoConstraints = false
+        let well = NSView()
+        well.addSubview(image)
+        let side = image.widthAnchor.constraint(equalToConstant: Self.previewSize)
+        side.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            container.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 8),
-            container.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -8),
-            container.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
-            container.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor),
-            container.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
+            image.topAnchor.constraint(equalTo: well.topAnchor),
+            image.bottomAnchor.constraint(equalTo: well.bottomAnchor),
+            image.centerXAnchor.constraint(equalTo: well.centerXAnchor),
+            image.widthAnchor.constraint(lessThanOrEqualTo: well.widthAnchor),
+            image.heightAnchor.constraint(equalTo: image.widthAnchor),
+            side,
         ])
-        return wrapper
-    }
+        addFullWidth(well, spacingAfter: 14)
 
-    /// Counts how many of the selected blobs would emit each `data.api` on re-upload.
-    private func multipleWriteEventSection(for blobs: [StorageObject], kind: ProviderKind) -> NSView {
-        let target = UploadTarget.default(for: kind)
-        var counts: [String: Int] = [:]
-        var systemName = ""
-        for blob in blobs {
-            let event = UploadPlan(byteCount: blob.size, target: target).predictedEvent
-            systemName = event.systemName
-            counts[event.eventName, default: 0] += 1
-        }
+        let title = NSTextField(wrappingLabelWithString: name)
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.isSelectable = true
+        // A name is often one long token (`Suvida_Healthcare_ADT_260913.csv`), with no
+        // spaces to wrap at. The Finder breaks those anywhere rather than cut them off.
+        title.lineBreakStrategy = []
+        title.cell?.lineBreakMode = .byCharWrapping
+        addFullWidth(title, spacingAfter: 2)
 
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .width
-        container.spacing = Self.rowSpacing
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addArrangedSubview(sectionHeader(systemName))
-
-        // Ties broken by name so the order doesn't wobble between selections of the
-        // same shape — dictionary order isn't stable.
-        for (name, count) in counts.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) }) {
-            container.addArrangedSubview(row(name, "\(count) of \(blobs.count) on re-upload"))
-        }
-        return container
+        let detail = NSTextField(labelWithString: subtitle)
+        detail.font = .systemFont(ofSize: 13)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addFullWidth(detail, spacingAfter: Self.sectionSpacing)
     }
 
     // MARK: - Sections
 
-    private func headerView(for object: StorageObject, metadata: ObjectMetadata?) -> NSView {
-        let icon = NSImageView()
-        icon.imageScaling = .scaleProportionallyUpOrDown
+    /// A titled group of rows. The title is in the Finder's style — bold, in the
+    /// label colour, not small capitals — with an optional control on its right.
+    private func section(_ title: String, rows: [Row], accessory: NSView? = nil) -> NSStackView {
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .systemFont(ofSize: 13, weight: .bold)
+        heading.textColor = .labelColor
 
-        if object.isPrefix {
-            icon.image = NSWorkspace.shared.icon(for: .folder)
-        } else {
-            // Prefer metadata contentType > listing contentType > filename extension > generic data.
-            // Quick Look preview of actual contents awaits a download path.
-            let resolvedType = contentType(for: object, metadata: metadata)
-            icon.image = NSWorkspace.shared.icon(for: resolvedType)
-        }
-        icon.image?.size = NSSize(width: 64, height: 64)
-        icon.frame = NSRect(origin: .zero, size: NSSize(width: 64, height: 64))
-
-        let name = NSTextField(wrappingLabelWithString: lastComponent(of: object.key))
-        name.font = .systemFont(ofSize: 13, weight: .semibold)
-        name.alignment = .center
-        name.isSelectable = true
-
-        let subtitleString: String
-        if object.isPrefix {
-            subtitleString = "Folder"
-        } else {
-            let resolvedType = contentType(for: object, metadata: metadata)
-            let kind = resolvedType.localizedDescription
-                ?? metadata?.contentType
-                ?? object.contentType
-                ?? "Blob"
-            let effectiveSize = metadata?.size ?? object.size
-            let sizeString = byteFormatter.string(fromByteCount: effectiveSize)
-            subtitleString = "\(kind) — \(sizeString)"
+        let titleBar = NSStackView(views: [heading])
+        titleBar.orientation = .horizontal
+        titleBar.alignment = .firstBaseline
+        if let accessory {
+            titleBar.addView(accessory, in: .trailing)
         }
 
-        let subtitle = NSTextField(labelWithString: subtitleString)
-        subtitle.font = .systemFont(ofSize: 11)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.alignment = .center
-
-        let container = NSStackView(views: [icon, name, subtitle])
+        let container = NSStackView()
         container.orientation = .vertical
-        container.alignment = .centerX
-        container.spacing = 6
-        // Stretch to fill the inspector width so centering works.
-        container.translatesAutoresizingMaskIntoConstraints = false
+        container.alignment = .leading
+        container.spacing = 0
+        container.addArrangedSubview(titleBar)
+        titleBar.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        container.setCustomSpacing(4, after: titleBar)
 
-        let wrapper = NSView()
-        wrapper.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(container)
-        NSLayoutConstraint.activate([
-            container.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 8),
-            container.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -8),
-            container.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
-            container.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor),
-            container.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
-        ])
-        return wrapper
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let rule = hairline()
+                container.addArrangedSubview(rule)
+                rule.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+            }
+            let view = self.row(row.label, row.value, wraps: row.wraps)
+            container.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        }
+        return container
     }
 
-    /// Resolves the best available UTType for a blob, falling back gracefully.
-    private func contentType(for object: StorageObject, metadata: ObjectMetadata?) -> UTType {
-        let mimeString = metadata?.contentType ?? object.contentType
-        if let mime = mimeString, let utType = UTType(mimeType: mime) {
-            return utType
-        }
-        let ext = (object.key as NSString).pathExtension
-        if !ext.isEmpty, let utType = UTType(filenameExtension: ext) {
-            return utType
-        }
-        return .data
+    /// "Show More" / "Show Less", as in the Finder: a link-coloured text button that
+    /// expands the Information section. The choice sticks, as it does there.
+    private func showMoreButton() -> NSButton {
+        let button = NSButton(
+            title: StrataDefaults.inspectorShowsMore ? "Show Less" : "Show More",
+            target: self,
+            action: #selector(toggleShowMore(_:))
+        )
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 13)
+        button.contentTintColor = .linkColor
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        return button
+    }
+
+    @objc private func toggleShowMore(_ sender: Any?) {
+        StrataDefaults.inspectorShowsMore.toggle()
+        guard shown.count == 1 else { return }
+        rebuild(for: shown[0], metadata: shownMetadata)
     }
 
     private func writeEventSection(for object: StorageObject, kind: ProviderKind) -> NSView {
@@ -395,15 +394,10 @@ final class InspectorViewController: NSViewController {
             target: .default(for: kind)
         ).predictedEvent
 
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .width
-        container.spacing = Self.rowSpacing
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        container.addArrangedSubview(sectionHeader(event.systemName))
-        container.addArrangedSubview(row("Re-upload", event.operationSummary))
-        container.addArrangedSubview(row("Emits", event.emissionSummary))
+        let container = section(event.systemName, rows: [
+            Row("Re-upload", event.operationSummary),
+            Row("Emits", event.emissionSummary),
+        ])
 
         let reassuring = event.confidence.isReassuring
         let statusImage = NSImageView()
@@ -419,94 +413,145 @@ final class InspectorViewController: NSViewController {
         status.orientation = .horizontal
         status.alignment = .firstBaseline
         status.spacing = 6
-        // Indented to the value column: this line elaborates on "Emits" above it,
-        // and starting it out in the label gutter made it look like a fourth row
-        // whose label had gone missing.
-        status.edgeInsets = NSEdgeInsets(top: 0, left: Self.labelColumnWidth + 8, bottom: 0, right: 0)
+        let rule = hairline()
+        container.addArrangedSubview(rule)
+        rule.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        container.setCustomSpacing(Self.rowPadding, after: rule)
         container.addArrangedSubview(status)
+        status.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         return container
     }
 
-    private func section(_ title: String, rows: [Row]) -> NSView {
-        let container = NSStackView()
-        container.orientation = .vertical
-        // `.width`, not `.leading`: rows have to span the pane for the value column
-        // to know how much room it has (and so truncating values can truncate).
-        container.alignment = .width
-        container.spacing = Self.rowSpacing
-        container.addArrangedSubview(sectionHeader(title))
-        for row in rows {
-            container.addArrangedSubview(self.row(row.label, row.value, wraps: row.wraps))
+    /// Counts how many of the selected blobs would emit each `data.api` on re-upload.
+    private func multipleWriteEventSection(for blobs: [StorageObject], kind: ProviderKind) -> NSView {
+        let target = UploadTarget.default(for: kind)
+        var counts: [String: Int] = [:]
+        var systemName = ""
+        for blob in blobs {
+            let event = UploadPlan(byteCount: blob.size, target: target).predictedEvent
+            systemName = event.systemName
+            counts[event.eventName, default: 0] += 1
         }
-        return container
+        // Ties broken by name so the order doesn't wobble between selections of the
+        // same shape — dictionary order isn't stable.
+        let rows = counts.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) })
+            .map { Row($0.key, "\($0.value) of \(blobs.count) on re-upload") }
+        return section(systemName, rows: rows)
+    }
+
+    // MARK: - Quick actions
+
+    /// The Finder ends its preview pane with the things you can do to the file, as
+    /// round buttons with a caption. These go up the responder chain to the browser,
+    /// the same way the context menu's items do.
+    private func quickActions(multiple: Bool) -> NSView {
+        var buttons: [NSButton] = []
+        if !multiple {
+            buttons.append(quickAction("Quick Look", symbol: "eye", action: #selector(BrowserSplitViewController.toggleQuickLook(_:))))
+        }
+        buttons.append(quickAction("Download", symbol: "arrow.down", action: #selector(BrowserSplitViewController.downloadSelection(_:))))
+        buttons.append(quickAction("Download To…", symbol: "folder", action: #selector(BrowserSplitViewController.downloadSelectionTo(_:))))
+
+        let row = NSStackView(views: buttons)
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.spacing = 20
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let wrapper = NSView()
+        wrapper.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 8),
+            row.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+            row.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
+            row.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor),
+            row.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
+        ])
+        return wrapper
+    }
+
+    private func quickAction(_ title: String, symbol: String, action: Selector) -> NSButton {
+        let button = NSButton(title: title, image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage(), target: nil, action: action)
+        button.isBordered = false
+        button.imagePosition = .imageAbove
+        button.font = .systemFont(ofSize: 11)
+        button.contentTintColor = .secondaryLabelColor
+        button.image = Self.ringed(symbol)
+        return button
+    }
+
+    /// A symbol inside a thin circle, the Finder's quick-action look.
+    private static func ringed(_ symbol: String) -> NSImage {
+        let diameter: CGFloat = 30
+        let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+        let image = NSImage(size: NSSize(width: diameter, height: diameter), flipped: false) { rect in
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.75, dy: 0.75))
+            ring.lineWidth = 1.5
+            NSColor.black.setStroke()
+            ring.stroke()
+            if let glyph {
+                let origin = NSPoint(x: rect.midX - glyph.size.width / 2, y: rect.midY - glyph.size.height / 2)
+                glyph.draw(in: NSRect(origin: origin, size: glyph.size))
+            }
+            return true
+        }
+        // A template, so the button's tint colours it and it follows the appearance.
+        image.isTemplate = true
+        return image
     }
 
     // MARK: - Empty state
 
     private func emptyState() -> NSView {
-        let iconView = NSImageView()
-        iconView.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: nil)
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 48, weight: .thin)
-        iconView.contentTintColor = .tertiaryLabelColor
-
         let label = NSTextField(labelWithString: "No Selection")
         label.font = .systemFont(ofSize: 13)
         label.textColor = .secondaryLabelColor
         label.alignment = .center
-
-        let container = NSStackView(views: [iconView, label])
-        container.orientation = .vertical
-        container.alignment = .centerX
-        container.spacing = 10
-        container.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
 
         let wrapper = NSView()
-        wrapper.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.addSubview(container)
+        wrapper.addSubview(label)
         NSLayoutConstraint.activate([
-            container.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
-            container.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 48),
-            container.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-            container.leadingAnchor.constraint(greaterThanOrEqualTo: wrapper.leadingAnchor),
-            container.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
+            label.centerXAnchor.constraint(equalTo: wrapper.centerXAnchor),
+            label.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 120),
+            label.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
         ])
         return wrapper
     }
 
     // MARK: - Row primitives
 
-    private func sectionHeader(_ title: String) -> NSView {
-        let field = NSTextField(labelWithString: title.uppercased())
-        field.font = .systemFont(ofSize: 11, weight: .semibold)
-        field.textColor = .secondaryLabelColor
-        return field
+    private func hairline() -> NSView {
+        let rule = NSBox()
+        rule.boxType = .separator
+        return rule
     }
 
-    /// Width of the right-aligned label gutter. Sized to the longest label actually
-    /// used ("Blob Type", "Total Size") and no wider: the inspector is a narrow,
-    /// user-resizable pane, and every point spent here comes straight out of the
-    /// value column, which is what forces values to wrap.
-    private static let labelColumnWidth: CGFloat = 62
-
+    /// Label on the left in the secondary colour, value on the right in the primary,
+    /// as the Finder's rows are.
+    ///
     /// `wraps: false` is for single-token values — paths, MIME types, ETags. They
     /// have no word boundaries to break on, so wrapping them shatters the token
-    /// mid-word across four lines; Finder's Get Info truncates such values (its
-    /// "Where:" row) and keeps the whole string reachable by selection and tooltip.
+    /// mid-word across four lines; the Finder truncates such values and keeps the
+    /// whole string reachable by selection and tooltip.
     private func row(_ label: String, _ value: String, wraps: Bool = true) -> NSView {
         let labelField = NSTextField(labelWithString: label)
-        labelField.alignment = .right
-        labelField.font = .systemFont(ofSize: 11)
+        labelField.font = .systemFont(ofSize: 12)
         labelField.textColor = .secondaryLabelColor
+        labelField.translatesAutoresizingMaskIntoConstraints = false
         labelField.setContentHuggingPriority(.required, for: .horizontal)
         labelField.setContentCompressionResistancePriority(.required, for: .horizontal)
-        labelField.widthAnchor.constraint(equalToConstant: Self.labelColumnWidth).isActive = true
 
         let valueField = wraps
             ? NSTextField(wrappingLabelWithString: value)
             : NSTextField(labelWithString: value)
         valueField.font = .systemFont(ofSize: 12)
-        valueField.isSelectable = true
         valueField.textColor = .labelColor
+        valueField.alignment = .right
+        valueField.isSelectable = true
+        valueField.translatesAutoresizingMaskIntoConstraints = false
+        valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         if !wraps {
             valueField.lineBreakMode = .byTruncatingMiddle
             valueField.cell?.usesSingleLineMode = true
@@ -516,13 +561,27 @@ final class InspectorViewController: NSViewController {
             valueField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
 
-        let row = NSStackView(views: [labelField, valueField])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 8
-        row.distribution = .fill
-        valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSView()
+        row.addSubview(labelField)
+        row.addSubview(valueField)
+        let pad = Self.rowPadding
+        NSLayoutConstraint.activate([
+            labelField.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            labelField.topAnchor.constraint(equalTo: row.topAnchor, constant: pad),
+            labelField.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -pad),
+            valueField.leadingAnchor.constraint(greaterThanOrEqualTo: labelField.trailingAnchor, constant: 12),
+            valueField.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            valueField.firstBaselineAnchor.constraint(equalTo: labelField.firstBaselineAnchor),
+            valueField.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -pad),
+        ])
         return row
+    }
+
+    /// "7,024 bytes" — the size to the byte, which the kind line under the name
+    /// rounds. The Finder's Get Info gives both the same way.
+    static func exactSize(_ bytes: Int64) -> String {
+        let number = NumberFormatter.localizedString(from: NSNumber(value: bytes), number: .decimal)
+        return bytes == 1 ? "1 byte" : "\(number) bytes"
     }
 
     /// Azure returns the ETag as an HTTP entity tag, quotes included
